@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="wb-base" content="">
+<title>向明笔记 — 写作即思考</title>
+<meta name="description" content="JimmyWang 的个人技术博客：前端、运维与内容主权的工程化实践。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/css/tokens.css?v=2026100401">
+<link rel="stylesheet" href="assets/css/site.css?v=2026100401">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <a class="site-logo" href="index.html"><span class="site-logo__mark">W</span><span>向明笔记</span></a>
+    <nav class="site-nav" aria-label="主导航">
+      <a href="index.html" class="is-active">首页</a>
+      <a href="archive.html">归档</a>
+      <a href="archive.html#categories">分类</a>
+      <a href="about.html">关于</a>
+    </nav>
+    <div class="header-actions">
+      <a class="icon-btn" href="search.html" aria-label="搜索" title="搜索（⌘K）">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      </a>
+      <button class="icon-btn" data-theme-toggle aria-label="切换主题">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <button class="icon-btn nav-toggle" data-nav-open aria-label="打开菜单">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<nav class="nav-drawer" aria-label="移动端导航">
+  <button class="icon-btn nav-drawer__close" data-nav-close aria-label="关闭菜单">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+  </button>
+  <a href="index.html">首页</a><a href="archive.html">归档</a><a href="archive.html#categories">分类</a><a href="about.html">关于</a><a href="search.html">搜索</a>
+</nav>
+
+<main class="container">
+  <section class="hero">
+    <h1 class="hero__title"></h1>
+    <p class="hero__desc"></p>
+    <div class="hero__links"></div>
+  </section>
+
+  <div class="post-list" data-render="post-list"></div>
+
+  <nav class="pagination" aria-label="分页">
+    <span class="is-disabled">‹</span>
+    <span class="is-current">1</span>
+    <a href="#">2</a><a href="#">3</a>
+    <span>…</span>
+    <a href="#">12</a>
+    <a href="#">›</a>
+  </nav>
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <p>© 2026 向明笔记 · 由 Markdown 与 Git 驱动 · <a href="#">RSS 订阅</a> · <a href="admin/login.html">管理入口</a></p>
+    <p><a href="#" rel="nofollow">浙ICP备2026XXXXXX号-1</a> · <a href="#" rel="nofollow">浙公网安备 3301XXXXXXXX号</a></p>
+  </div>
+</footer>
+
+<script src="assets/js/site.js?v=2026100401"></script>
+<script src="assets/js/api.js?v=2026100401"></script>
+<script src="assets/js/render.js?v=2026100401"></script>
+</body>
+</html>

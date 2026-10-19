@@ -1,0 +1,28 @@
+# Production state and local environments
+backups/
+backend/uploads/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.log
+backend/tests/integration-report.json
+# Credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+# OS/editor files
+.DS_Store
+._*
+.idea/
+.vscode/
+node_modules/

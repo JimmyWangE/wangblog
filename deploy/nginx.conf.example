@@ -1,0 +1,60 @@
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log;
+pid /run/nginx.pid;
+include /usr/share/nginx/modules/*.conf;
+
+events {
+    worker_connections 4096;
+}
+
+http {
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+    access_log  /var/log/nginx/access.log  main;
+    sendfile            on;
+    tcp_nopush          on;
+    keepalive_timeout   65;
+    types_hash_max_size 4096;
+    include             /etc/nginx/mime.types;
+    default_type        application/octet-stream;
+    gzip                on;
+    gzip_types          text/css application/javascript application/json image/svg+xml;
+    client_max_body_size 6m;
+
+    server {
+        listen       80 default_server;
+        server_name  _;
+        root         /opt/wangblog/prototype;
+        index        index.html;
+
+        # 后端 API 反向代理
+        location /api/ {
+            proxy_pass http://127.0.0.1:8310;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_read_timeout 30s;
+        }
+
+        # 用户上传文件（由后端 StaticFiles 提供）
+        location ^~ /uploads/ {
+            proxy_pass http://127.0.0.1:8310;
+            expires 30d;
+        }
+
+        # 静态资源缓存（CSS/JS/图片/字体）
+        location ~* \.(?:css|js|png|jpg|jpeg|webp|svg|ico|woff2?)$ {
+            expires 7d;
+            add_header Cache-Control "public";
+            try_files $uri =404;
+        }
+
+        # HTML 不缓存：保证部署后即时生效（静态资源靠 ?v= 版本号做长缓存）
+        location / {
+            add_header Cache-Control "no-cache, must-revalidate";
+            try_files $uri $uri/ =404;
+        }
+    }
+}

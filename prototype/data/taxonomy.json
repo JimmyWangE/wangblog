@@ -1,0 +1,156 @@
+{
+  "_comment": "核心业务数据：分类 / 标签 / 归档统计。后续由后端 GET /api/taxonomy 提供",
+  "totalPosts": 47,
+  "years": [
+    {
+      "year": 2026,
+      "count": 24
+    },
+    {
+      "year": 2025,
+      "count": 23
+    }
+  ],
+  "categories": [
+    {
+      "name": "前端",
+      "count": 15
+    },
+    {
+      "name": "运维",
+      "count": 11
+    },
+    {
+      "name": "随笔",
+      "count": 21
+    }
+  ],
+  "tags": [
+    {
+      "name": "性能优化",
+      "count": 4,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "数据主权",
+      "count": 3,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "自建",
+      "count": 3,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "CSS",
+      "count": 2,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "写作",
+      "count": 2,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "博客建设",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "HTTP",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "Docker",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "Git",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "响应式",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "Nginx",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "设计",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "安全",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "备份",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "复盘",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "RSS",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "WebVitals",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "Markdown",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "SEO",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    },
+    {
+      "name": "结构化数据",
+      "count": 1,
+      "size": 14,
+      "tone": "normal"
+    }
+  ],
+  "postsSummary": {
+    "total": 47,
+    "published": 43,
+    "draft": 3,
+    "scheduled": 1
+  }
+}
