@@ -1,5 +1,9 @@
-"""SQLite 数据访问层（开发/演示）。生产切换 PostgreSQL 时只需替换本模块的连接与占位符。"""
+"""SQLite 数据访问层：Schema、轻量迁移、种子数据导入。
+
+生产切换 PostgreSQL 时只需替换本模块的连接与占位符。
+"""
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -60,7 +64,24 @@ CREATE TABLE IF NOT EXISTS idempotency_keys(key TEXT PRIMARY KEY, response TEXT 
 CREATE TABLE IF NOT EXISTS audit_logs(
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, action TEXT NOT NULL,
   detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS refresh_tokens(
+  jti TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS post_likes(
+  post_id TEXT NOT NULL, visitor TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(post_id, visitor));
 """
+
+# 增量迁移：(表, 列, 定义)。对已有线上库执行 ALTER TABLE，幂等。
+MIGRATIONS = [
+    ("posts", "content_html", "TEXT NOT NULL DEFAULT ''"),
+    ("posts", "toc", "TEXT NOT NULL DEFAULT '[]'"),
+    ("posts", "word_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("posts", "like_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("posts", "render_ver", "INTEGER NOT NULL DEFAULT 0"),
+    ("categories", "description", "TEXT NOT NULL DEFAULT ''"),
+    ("categories", "slug", "TEXT"),
+]
+
+RENDER_VERSION = 2  # 渲染器升级时 +1，启动时自动重渲染所有文章
 
 
 def now() -> str:
@@ -82,9 +103,19 @@ def conn() -> sqlite3.Connection:
         _conn = sqlite3.connect(settings.DB_PATH, check_same_thread=False)
         _conn.row_factory = sqlite3.Row
         _conn.execute("PRAGMA foreign_keys = ON")
+        _conn.execute("PRAGMA journal_mode = WAL")
         with _lock:
             _conn.executescript(SCHEMA)
+            _migrate(_conn)
     return _conn
+
+
+def _migrate(c: sqlite3.Connection) -> None:
+    for table, column, ddl in MIGRATIONS:
+        cols = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+    c.commit()
 
 
 def q(sql: str, args=()) -> list[dict]:
@@ -105,88 +136,139 @@ def exec_(sql: str, args=()) -> int:
         return cur.rowcount
 
 
+# ---------------------------------------------------------------- 渲染缓存列
+def rerender_post(post_id: str) -> None:
+    """从 content_md 渲染并写回 content_html / toc / 字数 / 阅读时长 / 摘要。"""
+    from .markdown import make_excerpt, render_post
+
+    row = q1("SELECT content_md, detail, excerpt FROM posts WHERE id=?", (post_id,))
+    if not row:
+        return
+    md = row["content_md"] or ""
+    if md.strip():
+        r = render_post(md)
+        excerpt = row["excerpt"] or make_excerpt(md)
+        exec_("""UPDATE posts SET content_html=?, toc=?, word_count=?, reading_minutes=?, excerpt=?, render_ver=?
+                 WHERE id=?""",
+              (r["html"], json.dumps(r["toc"], ensure_ascii=False), r["words"], r["readingMinutes"],
+               excerpt, RENDER_VERSION, post_id))
+    else:
+        # 兼容旧数据：只有预渲染 HTML（detail.contentHtml）而没有 Markdown 的文章
+        try:
+            detail = json.loads(row["detail"] or "{}")
+        except ValueError:
+            detail = {}
+        legacy = detail.get("contentHtml") or ""
+        exec_("UPDATE posts SET content_html=?, toc=?, render_ver=? WHERE id=?",
+              (legacy, json.dumps(detail.get("toc", []), ensure_ascii=False), RENDER_VERSION, post_id))
+
+
+def rerender_outdated() -> int:
+    rows = q("SELECT id FROM posts WHERE render_ver < ?", (RENDER_VERSION,))
+    for r in rows:
+        rerender_post(r["id"])
+    return len(rows)
+
+
 # ---------------------------------------------------------------- 种子数据
+def _parse_front_matter(text: str) -> tuple[dict, str]:
+    m = re.match(r"^---\n(.*?)\n---\n?(.*)$", text, re.S)
+    if not m:
+        return {}, text
+    meta = {}
+    for line in m.group(1).splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            meta[k.strip()] = v.strip()
+    return meta, m.group(2).lstrip("\n")
+
+
 def seed_if_empty() -> None:
-    """首次启动时从 prototype 数据契约导入种子数据（对应架构文档 P1「数据导入」）。"""
-    if q1("SELECT id FROM posts LIMIT 1"):
+    """空库首次启动：创建管理员、站点配置；WB_SEED_DEMO=true 时导入演示文章与评论。"""
+    if q1("SELECT id FROM users LIMIT 1"):
         return
     from .security import hash_password
 
-    seed_dir: Path = settings.SEED_DIR
-    posts_json = json.loads((seed_dir / "posts.json").read_text(encoding="utf-8"))
-    comments_json = json.loads((seed_dir / "comments.json").read_text(encoding="utf-8"))
-    taxonomy_json = json.loads((seed_dir / "taxonomy.json").read_text(encoding="utf-8"))
-    dashboard_json = json.loads((seed_dir / "dashboard.json").read_text(encoding="utf-8"))
-    site_json = json.loads(settings.SITE_SEED.read_text(encoding="utf-8"))
-
     ts = now()
-    # 用户（admin 初始密码取 WB_ADMIN_PASSWORD，见 README）
-    for uname, pwd in (("admin", settings.ADMIN_PASSWORD), ("reviewer", "review123")):
-        exec_("INSERT INTO users(id,username,password_hash,totp_secret,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-              (uid(), uname, hash_password(pwd), "JBSWY3DPEHPK3PXP", ts, ts))
+    exec_("INSERT INTO users(id,username,password_hash,totp_secret,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+          (uid(), "admin", hash_password(settings.ADMIN_PASSWORD), "JBSWY3DPEHPK3PXP", ts, ts))
 
-    # 分类 / 标签
-    cat_ids, tag_ids = {}, {}
-    for i, c in enumerate(taxonomy_json["categories"]):
-        cat_ids[c["name"]] = uid()
-        exec_("INSERT INTO categories(id,name,sort) VALUES(?,?,?)", (cat_ids[c["name"]], c["name"], i))
-    for t in taxonomy_json["tags"]:
-        tag_ids[t["name"]] = uid()
-        exec_("INSERT INTO tags(id,name) VALUES(?,?)", (tag_ids[t["name"]], t["name"]))
-
-    # 文章（含详情契约 detail / 编辑器字段 editor）
-    post_ids = {}
-    for p in posts_json["posts"]:
-        pid = uid()
-        post_ids[p["slug"]] = pid
-        published_at = p["date"] + " 12:00:00" if p["status"] in ("published", "pinned") else None
-        exec_(
-            """INSERT INTO posts(id,slug,title,excerpt,content_md,detail,status,category_id,cover,
-               reading_minutes,comment_count,scheduled_at,published_at,draft_note,editor,created_at,updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (pid, p["slug"], p["title"], p.get("excerpt", ""), p.get("editor", {}).get("markdown", ""),
-             json.dumps(p.get("detail", {}), ensure_ascii=False), p["status"],
-             cat_ids.get(p["category"]), json.dumps(p.get("cover"), ensure_ascii=False) if p.get("cover") else None,
-             p.get("readingMinutes", 0), p.get("commentCount") or 0, p.get("scheduledAt"), published_at,
-             p.get("draftNote"), json.dumps(p.get("editor", {}), ensure_ascii=False), ts, ts))
-        for t in p.get("tags", []):
-            if t in tag_ids:
-                exec_("INSERT OR IGNORE INTO post_tags(post_id,tag_id) VALUES(?,?)", (pid, tag_ids[t]))
-
-    # 文章评论（已通过）+ 待审队列
-    for slug, items in comments_json["byPost"].items():
-        pid = post_ids.get(slug)
-        if not pid:
-            continue
-        for c in items:
-            exec_("""INSERT INTO comments(id,post_id,author_name,content,status,is_author,created_at,reviewed_at)
-                     VALUES(?,?,?,?,?,?,?,?)""",
-                  (uid(), pid, c["author"], c["body"], "approved", 1 if c.get("isAuthor") else 0,
-                   c["time"], c["time"]))
-    for c in comments_json["review"]["pending"]:
-        pid = post_ids.get("http-cache-deep-dive")
-        body = c["bodyHtml"].replace("<mark>", "").replace("</mark>", "")
-        exec_("""INSERT INTO comments(id,post_id,author_name,author_email,content,status,flag,created_at)
-                 VALUES(?,?,?,?,?,?,?,?)""",
-              (uid(), pid, c["author"], None if c["contact"] in ("游客",) else c["contact"],
-               body, "pending", c.get("flag"), ts))
-
-    # 站点配置 / 友链
-    exec_("INSERT INTO site_config(key,value,updated_at) VALUES('site',?,?)",
+    seed_dir: Path = settings.SEED_DIR
+    site_file = seed_dir / "site.json"
+    site_json = json.loads(site_file.read_text(encoding="utf-8")) if site_file.exists() else {}
+    exec_("INSERT OR REPLACE INTO site_config(key,value,updated_at) VALUES('site',?,?)",
           (json.dumps(site_json, ensure_ascii=False), ts))
-    for i, f in enumerate(site_json["about"].get("friendLinks", [])):
+    for i, f in enumerate(site_json.get("about", {}).get("friendLinks", [])):
         exec_("INSERT INTO friend_links(id,name,url,description,sort) VALUES(?,?,?,?,?)",
-              (uid(), f["name"], f["href"], f["desc"], i))
+              (uid(), f["name"], f["href"], f.get("desc", ""), i))
+    cat_desc = site_json.get("categories", {})
+    for i, (name, desc) in enumerate(cat_desc.items()):
+        exec_("INSERT OR IGNORE INTO categories(id,name,sort,description) VALUES(?,?,?,?)", (uid(), name, i, desc))
 
-    # 看板热度：Top5 阅读量回写 view_count；近 30 天趋势写入 analytics_daily
-    for item in dashboard_json["topPosts"]["items"]:
-        views = int(float(item["num"].rstrip("k")) * 1000)
-        exec_("UPDATE posts SET view_count=? WHERE slug=?", (views, item["slug"]))
-    values = dashboard_json["trend"]["values"]
-    base = datetime.now() - timedelta(days=len(values) - 1)
-    for i, v in enumerate(values):
+    if q1("SELECT id FROM posts LIMIT 1") or not settings.SEED_DEMO:
+        return
+    _seed_demo(seed_dir, ts)
+
+
+def _seed_demo(seed_dir: Path, ts: str) -> None:
+    post_ids: dict[str, str] = {}
+    for f in sorted((seed_dir / "posts").glob("*.md")):
+        meta, body = _parse_front_matter(f.read_text(encoding="utf-8"))
+        slug = f.stem
+        cat_name = meta.get("category", "")
+        cat = q1("SELECT id FROM categories WHERE name=?", (cat_name,))
+        if not cat and cat_name:
+            cid = uid()
+            exec_("INSERT INTO categories(id,name,sort) VALUES(?,?,?)", (cid, cat_name, 99))
+            cat = {"id": cid}
+        date = meta.get("date", ts)
+        if len(date) == 16:
+            date += ":00"
+        status = meta.get("status", "draft")
+        pid = uid()
+        post_ids[slug] = pid
+        exec_("""INSERT INTO posts(id,slug,title,excerpt,content_md,status,category_id,cover,view_count,
+                 scheduled_at,published_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+              (pid, slug, meta.get("title", slug), meta.get("excerpt", ""), body, status, cat and cat["id"],
+               meta.get("cover") or None, int(meta.get("views", 0) or 0),
+               date if status == "scheduled" else None,
+               date if status in ("published", "pinned") else None, date, date))
+        for t in [x.strip() for x in meta.get("tags", "").split(",") if x.strip()]:
+            tag = q1("SELECT id FROM tags WHERE name=?", (t,))
+            tid = tag["id"] if tag else uid()
+            if not tag:
+                exec_("INSERT INTO tags(id,name) VALUES(?,?)", (tid, t))
+            exec_("INSERT OR IGNORE INTO post_tags(post_id,tag_id) VALUES(?,?)", (pid, tid))
+        exec_("INSERT INTO post_versions(post_id,content_md,version_no,created_at) VALUES(?,?,1,?)", (pid, body, date))
+        rerender_post(pid)
+
+    cfile = seed_dir / "comments.json"
+    if cfile.exists():
+        by_post: dict[str, list[str]] = {}
+        for c in json.loads(cfile.read_text(encoding="utf-8")).get("comments", []):
+            pid = post_ids.get(c["post"])
+            if not pid:
+                continue
+            cid = uid()
+            siblings = by_post.setdefault(c["post"], [])
+            parent = siblings[c["replyTo"]] if isinstance(c.get("replyTo"), int) and c["replyTo"] < len(siblings) else None
+            siblings.append(cid)
+            created = c.get("time") or ts
+            exec_("""INSERT INTO comments(id,post_id,parent_id,author_name,author_email,content,status,flag,is_author,
+                     created_at,reviewed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                  (cid, pid, parent, c["author"], c.get("email"), c["body"], c.get("status", "pending"),
+                   c.get("flag"), 1 if c.get("isAuthor") else 0, created,
+                   created if c.get("status") == "approved" else None))
+        exec_("""UPDATE posts SET comment_count=(SELECT COUNT(*) FROM comments
+                 WHERE comments.post_id=posts.id AND comments.status='approved')""")
+
+    # 近 30 天访问趋势（演示数据，真实访问会叠加在上面）
+    import random
+    rnd = random.Random(42)
+    base = datetime.now() - timedelta(days=29)
+    for i in range(30):
         d = (base + timedelta(days=i)).strftime("%Y-%m-%d")
-        exec_("INSERT INTO analytics_daily(date,post_id,pv,uv,mer) VALUES(?,?,?,?,?)",
-              (d, "", v * 40, v * 27, v * 11))
-
-    exec_("INSERT INTO audit_logs(user_id,action,detail,created_at) VALUES(NULL,'seed','prototype data imported',?)", (ts,))
+        pv = int(600 + i * 18 + rnd.randint(-120, 160) + (180 if (base + timedelta(days=i)).weekday() < 5 else -60))
+        exec_("INSERT OR IGNORE INTO analytics_daily(date,post_id,pv,uv,mer) VALUES(?,?,?,?,?)",
+              (d, "", pv, int(pv * 0.62), int(pv * 0.24)))
+    exec_("INSERT INTO audit_logs(user_id,action,detail,created_at) VALUES(NULL,'seed','demo data imported',?)", (ts,))

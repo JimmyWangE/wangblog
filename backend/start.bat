@@ -9,6 +9,8 @@ cd /d "%~dp0"
 
 set PORT=%WB_PORT%
 if "%PORT%"=="" set PORT=8310
+set HOST=%WB_HOST%
+if "%HOST%"=="" set HOST=127.0.0.1
 set LOG_PREFIX=[WangBlog]
 
 echo ============================================================
@@ -49,7 +51,7 @@ set VENV_PY=.venv\Scripts\python.exe
 
 rem ---- [3/4] Dependencies check ----
 echo %LOG_PREFIX% [3/4] Checking dependencies...
-%VENV_PY% -c "import fastapi, uvicorn, jwt, multipart, pyotp" >nul 2>nul
+%VENV_PY% -c "import fastapi, uvicorn, jwt, multipart, pyotp, markdown_it, mdit_py_plugins, pygments" >nul 2>nul
 if errorlevel 1 (
     echo %LOG_PREFIX% Dependencies missing, installing from requirements.txt ...
     %VENV_PY% -m pip install --upgrade pip
@@ -77,11 +79,13 @@ if not errorlevel 1 (
 echo.
 echo %LOG_PREFIX% Starting WangBlog API ...
 echo %LOG_PREFIX%   URL  : http://127.0.0.1:%PORT%
+echo %LOG_PREFIX%   Site : http://127.0.0.1:%PORT%/
+echo %LOG_PREFIX%   Admin: http://127.0.0.1:%PORT%/admin/
 echo %LOG_PREFIX%   Docs : http://127.0.0.1:%PORT%/docs
 echo %LOG_PREFIX%   Admin demo account: admin / admin123 ^(TOTP: any 6 digits^)
 echo %LOG_PREFIX% Press Ctrl+C to stop.
 echo.
-%VENV_PY% -m uvicorn app.main:app --host 0.0.0.0 --port %PORT%
+%VENV_PY% -m uvicorn app.main:app --host %HOST% --port %PORT%
 if errorlevel 1 (
     echo.
     echo %LOG_PREFIX% [ERROR] Server exited abnormally. Check the log above.

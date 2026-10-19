@@ -6,13 +6,15 @@
 """
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from . import db
 from .helpers import ERR_LOGIN_FAILED, ERR_LOCKED, ERR_PARAM, ERR_UNAUTHORIZED, ok, raise_err
+from .deps import current_user
 from .security import (check_locked, clear_login_fails, consume_ticket, decode_token, issue_ticket,
                        issue_tokens, record_login_fail, revoke_refresh, verify_password, verify_totp)
+from .config import settings
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
 
@@ -41,20 +43,21 @@ def login(body: LoginIn):
     if user:
         left = check_locked(user)
         if left:
-            raise_err(ERR_LOCKED, f"已连续 {5} 次失败，账户锁定中", {"retryAfter": left})
+            raise_err(ERR_LOCKED, "登录失败次数过多，账户锁定中", {"retryAfter": left})
 
     if not user or not verify_password(body.password, user["password_hash"]):
         if user:
             locked_for = record_login_fail(user)
             if locked_for:
                 return_error = {"retryAfter": locked_for}
-                raise_err(ERR_LOCKED, "已连续 5 次失败，账户锁定 15 分钟", return_error)
+                raise_err(ERR_LOCKED, f"已连续 {settings.LOGIN_MAX_FAILS} 次失败，账户锁定 {settings.LOGIN_LOCK_MINUTES} 分钟", return_error)
         raise_err(ERR_LOGIN_FAILED, "用户名或密码错误")
 
     clear_login_fails(user["id"])
     db.exec_("INSERT INTO audit_logs(user_id,action,detail,created_at) VALUES(?,?,?,?)",
              (user["id"], "login.password", "密码校验通过，进入 TOTP", db.now()))
-    return ok({"ticket": issue_ticket(user["id"]), "ticketExpiresIn": 300, "next": "totp"})
+    return ok({"ticket": issue_ticket(user["id"]), "ticketExpiresIn": 300, "next": "totp",
+               "demoTotp": settings.DEMO_TOTP})
 
 
 @router.post("/totp")
@@ -84,3 +87,16 @@ def refresh(body: RefreshIn):
         raise_err(ERR_UNAUTHORIZED, "用户不存在")
     revoke_refresh(payload["jti"])  # 轮换：旧 refresh 立即失效
     return ok(issue_tokens(user["id"], user["username"]))
+
+
+@router.post("/logout")
+def logout(body: RefreshIn):
+    payload = decode_token(body.refreshToken, "refresh")
+    if payload:
+        revoke_refresh(payload["jti"])
+    return ok({})
+
+
+@router.get("/me")
+def me(user: dict = Depends(current_user)):
+    return ok({"id": user["id"], "username": user["username"], "demoTotp": settings.DEMO_TOTP})
