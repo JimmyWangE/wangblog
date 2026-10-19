@@ -22,7 +22,7 @@ echo "$LOG [2/4] Preparing virtual environment..."
 VENV_PY=.venv/bin/python
 
 echo "$LOG [3/4] Checking dependencies..."
-if ! "$VENV_PY" -c "import fastapi, uvicorn, jwt, multipart, pyotp" 2>/dev/null; then
+if ! "$VENV_PY" -c "import fastapi, uvicorn, jwt, multipart, pyotp, markdown_it, mdit_py_plugins, pygments" 2>/dev/null; then
   echo "$LOG Installing dependencies..."
   "$VENV_PY" -m pip install --upgrade pip
   "$VENV_PY" -m pip install -r requirements.txt
@@ -34,5 +34,5 @@ if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$PORT/api/health"; then
   exit 0
 fi
 
-echo "$LOG Starting: http://127.0.0.1:$PORT  (docs: /docs, Ctrl+C to stop)"
-exec "$VENV_PY" -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT"
+echo "$LOG Starting: http://127.0.0.1:$PORT  (site: /  admin: /admin/  docs: /docs, Ctrl+C to stop)"
+exec "$VENV_PY" -m uvicorn app.main:app --host "${WB_HOST:-127.0.0.1}" --port "$PORT"

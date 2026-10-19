@@ -8,6 +8,7 @@ User=wangblog
 Group=wangblog
 WorkingDirectory=/opt/wangblog/backend
 EnvironmentFile=/etc/wangblog.env
+Environment=WB_WEB_DIR=/opt/wangblog/web
 ExecStart=/opt/wangblog/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8310
 Restart=always
 RestartSec=3

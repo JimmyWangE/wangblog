@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#05060a">
+<title>向明笔记</title>
+<meta name="description" content="">
+<!--wb:meta-->
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="alternate" type="application/rss+xml" title="RSS" href="/rss.xml">
+<script>
+  /* 首帧前确定主题，避免闪烁（默认深色） */
+  (function () { try { var t = localStorage.getItem("wb-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {} })();
+</script>
+<link rel="stylesheet" href="/assets/css/base.css">
+<link rel="stylesheet" href="/assets/css/site.css">
+<link rel="stylesheet" href="/assets/css/prose.css">
+<link rel="modulepreload" href="/assets/js/site/main.js">
+</head>
+<body>
+<div class="ambient" aria-hidden="true">
+  <div class="ambient__grid"></div>
+  <div class="ambient__blob ambient__blob--1"></div>
+  <div class="ambient__blob ambient__blob--2"></div>
+  <div class="ambient__blob ambient__blob--3"></div>
+</div>
+
+<header class="header" id="header"></header>
+<main id="app" class="page" tabindex="-1"></main>
+<footer class="footer" id="footer"></footer>
+
+<noscript><p style="padding:120px 24px;text-align:center">本站为单页应用，请启用 JavaScript 浏览。也可通过 <a href="/rss.xml">RSS</a> 阅读全部文章。</p></noscript>
+<script type="module" src="/assets/js/site/main.js"></script>
+</body>
+</html>

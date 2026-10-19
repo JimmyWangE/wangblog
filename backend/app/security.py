@@ -17,8 +17,8 @@ from .config import settings
 from . import db
 
 _PBKDF2_ITERATIONS = 260_000
-_tickets: dict[str, dict] = {}          # TOTP 临时票据（生产放 Redis，TTL 5min）
-_refresh_whitelist: set[str] = set()    # Refresh Token jti 白名单（生产放 Redis）
+_tickets: dict[str, dict] = {}          # TOTP 临时票据（进程内，TTL 5min）
+# Refresh Token 白名单持久化在 refresh_tokens 表：后端重启不会让已登录会话失效
 
 
 # ---------------------------------------------------------------- 密码
@@ -47,7 +47,9 @@ def issue_tokens(user_id: str, username: str) -> dict:
     refresh = jwt.encode(
         {"sub": user_id, "type": "refresh", "jti": jti, "iat": now_ts, "exp": now_ts + settings.REFRESH_TTL},
         settings.SECRET, algorithm="HS256")
-    _refresh_whitelist.add(jti)
+    db.exec_("INSERT INTO refresh_tokens(jti,user_id,expires_at,created_at) VALUES(?,?,?,?)",
+             (jti, user_id, now_ts + settings.REFRESH_TTL, db.now()))
+    db.exec_("DELETE FROM refresh_tokens WHERE expires_at < ?", (now_ts,))
     return {"accessToken": access, "refreshToken": refresh, "expiresIn": settings.ACCESS_TTL}
 
 
@@ -58,17 +60,23 @@ def decode_token(token: str, expected_type: str = "access") -> dict | None:
         return None
     if payload.get("type") != expected_type:
         return None
-    if expected_type == "refresh" and payload.get("jti") not in _refresh_whitelist:
+    if expected_type == "refresh" and not db.q1("SELECT jti FROM refresh_tokens WHERE jti=?", (payload.get("jti"),)):
         return None
     return payload
 
 
 def revoke_refresh(jti: str) -> None:
-    _refresh_whitelist.discard(jti)
+    db.exec_("DELETE FROM refresh_tokens WHERE jti=?", (jti,))
+
+
+def revoke_user_sessions(user_id: str) -> None:
+    db.exec_("DELETE FROM refresh_tokens WHERE user_id=?", (user_id,))
 
 
 # ---------------------------------------------------------------- 登录票据（密码步 → TOTP 步）
 def issue_ticket(user_id: str) -> str:
+    for k in [k for k, v in _tickets.items() if v["exp"] < time.time()]:
+        _tickets.pop(k, None)
     ticket = uuid.uuid4().hex
     _tickets[ticket] = {"user_id": user_id, "exp": time.time() + 300}  # 5 分钟有效
     return ticket

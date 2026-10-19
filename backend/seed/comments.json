@@ -1,0 +1,14 @@
+{
+  "_comment": "种子评论：首次建库导入。replyTo 为同一文章内被回复评论的序号（从 0 开始）",
+  "comments": [
+    {"post": "http-cache-deep-dive", "author": "陈默", "body": "「HTML 永不强缓存」这条太关键了，我们之前就是踩了这个坑，用户反馈列表不更新排查了一下午。", "time": "2026-09-19 08:42:00", "status": "approved"},
+    {"post": "http-cache-deep-dive", "author": "Lin", "email": "lin@example.com", "body": "请问 `immutable` 在 Safari 上的兼容性如何处理？需要降级吗？", "time": "2026-09-18 22:15:00", "status": "approved"},
+    {"post": "http-cache-deep-dive", "author": "JimmyWang", "body": "不需要降级，Safari 会忽略不认识的指令，退化为普通的 `max-age` 行为，语义上是安全的。", "time": "2026-09-18 23:02:00", "status": "approved", "isAuthor": true, "replyTo": 1},
+    {"post": "why-self-hosted-blog", "author": "老白", "body": "同样从 WordPress 迁出来的，SQLite 单文件备份真的太省心了。", "time": "2026-09-21 10:12:00", "status": "approved"},
+    {"post": "docker-compose-homelab", "author": "Kris", "body": "`depends_on.condition: service_healthy` 这个之前一直没注意到，学到了。", "time": "2026-09-16 09:30:00", "status": "approved"},
+    {"post": "http-cache-deep-dive", "author": "阿凯", "email": "aka@example.com", "body": "博主写得很好！另外推荐一个代刷流量的平台，需要的可以联系我…", "status": "pending", "flag": "命中关键词"},
+    {"post": "http-cache-deep-dive", "author": "Lin", "email": "lin@example.com", "body": "追问一下：如果 HTML 用 no-cache，那 CDN 层的缓存还有意义吗？", "status": "pending"},
+    {"post": "docker-compose-homelab", "author": "老白", "body": "Docker 那篇帮大忙了，照着手顺一遍就起来了。期待写一篇备份策略的！", "status": "pending"},
+    {"post": "why-self-hosted-blog", "author": "匿名", "body": "测试测试测试测试测试", "status": "pending", "flag": "频率限制"}
+  ]
+}

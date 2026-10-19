@@ -1,79 +1,55 @@
-# 向明笔记 · 后端服务（Python / FastAPI）
+# WangBlog 后端（FastAPI）
 
-实现 `deliverables/backend-design/backend-architecture.md` 定义的全部模块与 23 个接口。
-数据契约与前端 `prototype/assets/js/api.js` 的 `WBApi` 方法一一对应——**前端只需把 `ENDPOINTS`
-指向本服务即可联调，页面代码零改动**。
+总体说明、部署与配置见仓库根目录 `README.md`。本文件列出接口一览。
 
-## 快速开始
+所有接口返回统一包络 `{code, message, data, requestId}`，`code = 0` 表示成功。后台接口需 `Authorization: Bearer <accessToken>`。
+交互式文档：启动后访问 `/docs`。
 
-| 平台 | 方式 |
-|---|---|
-| Windows | 双击 `start.bat`（环境检查 → 依赖确认 → 启动，含日志与异常提示） |
-| macOS / Linux | `bash start.sh` |
+## 前台（无需登录）
 
-启动后：
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/site/config` | 站点配置（文案、作者、友链） |
+| GET | `/api/home` | 首页聚合：置顶、热门、最新评论、分类、标签、统计 |
+| GET | `/api/posts?page&pageSize&category&tag&year&sort&excludePinned` | 文章列表 |
+| GET | `/api/posts/{slug}` | 文章详情（HTML、目录、上下篇、相关），支持 ETag |
+| GET / POST | `/api/posts/{slug}/comments` | 评论树 / 提交评论（`parentId` 回复） |
+| POST | `/api/posts/{slug}/like` | 点赞 / 取消点赞 |
+| GET | `/api/taxonomy` | 分类、标签、年份与全站统计 |
+| GET | `/api/archive?category&tag` | 按年份分组的归档 |
+| GET | `/api/search?q` | 多关键词搜索，结果带 `<mark>` 高亮 |
+| POST | `/api/events` | 阅读事件（view / read_finish） |
+| GET | `/rss.xml`、`/sitemap.xml`、`/robots.txt` | 订阅与搜索引擎 |
 
-- API 根地址：`http://127.0.0.1:8310`
-- 交互式接口文档（Swagger）：`http://127.0.0.1:8310/docs`
-- 健康检查：`GET /api/health`
-- 演示账号：`admin / admin123`（TOTP 步任意 6 位数字；输入 `wrong` 模拟失败，5 次锁定 15 分钟）
+## 认证
 
-## 目录结构
+`POST /api/auth/login` → `POST /api/auth/totp` → 获得双令牌；`POST /api/auth/refresh` 轮换；`POST /api/auth/logout`；`GET /api/auth/me`。
+连续失败 5 次锁定 15 分钟（`42301`，`data.retryAfter` 为剩余秒数）。
 
-```
-backend/
-├── app/
-│   ├── main.py            # 应用装配：路由/中间件/异常处理/静态资源
-│   ├── config.py          # 全部环境变量配置（见下表）
-│   ├── db.py              # SQLite 访问层 + Schema + 种子数据导入（生产换 PostgreSQL）
-│   ├── security.py        # PBKDF2 密码哈希、JWT 双令牌、TOTP、登录锁定
-│   ├── services.py        # TTL 缓存、限流、反垃圾、进程内事件总线与异步 worker
-│   ├── helpers.py         # 响应包络/错误码/分页/ETag/搜索高亮
-│   ├── deps.py            # JWT 鉴权依赖、客户端 IP、幂等键
-│   ├── routers_public.py  # 前台 API（#1-#8，无需鉴权）
-│   ├── routers_auth.py    # 认证 API（#9-#11）
-│   └── routers_admin.py   # 后台 API（#12-#23，需鉴权）
-├── tests/test_integration.py  # 整体集成测试（逐一验证全部接口）
-├── requirements.txt
-├── start.bat / start.sh
-└── uploads/               # 上传文件（生产替换为 OSS/MinIO）
-```
+## 后台
 
-## 配置说明（环境变量）
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/admin/dashboard` | 看板聚合 |
+| GET / POST | `/api/admin/posts` | 列表（`status`、`q`、`category`、`tag`）/ 新建 |
+| GET | `/api/admin/posts/{id}` | 编辑器初始化数据 |
+| PUT | `/api/admin/posts/{id}/draft` | 保存正文与元数据（`baseUpdatedAt` 乐观锁，冲突 `40902`） |
+| POST | `/api/admin/posts/{id}/publish` | 立即 / 定时发布，返回 `taskId` |
+| GET | `/api/admin/tasks/{taskId}` | 发布流水线进度 |
+| POST | `/api/admin/posts/{id}/unpublish` · `/restore` | 撤回为草稿 · 从回收站恢复 |
+| DELETE | `/api/admin/posts/{id}[?purge=true]` | 移入回收站 / 彻底删除 |
+| POST | `/api/admin/posts/batch` | 批量 publish / trash / restore / unpublish / setCategory / addTags |
+| GET | `/api/admin/posts/{id}/versions[/{v}]` | 历史版本 |
+| POST | `/api/admin/render` | 按前台规则渲染 Markdown（预览） |
+| POST | `/api/admin/uploads` | 图片上传（字段 `files`，≤5MB，png/jpg/gif/webp/avif） |
+| GET | `/api/admin/comments?status` | 评论审核队列 |
+| POST | `/api/admin/comments/{id}/{approve\|spam\|delete\|pending\|reply}` | 审核操作 / 作者回复 |
+| GET | `/api/admin/taxonomy` | 分类与标签（含数量） |
+| POST / PUT / DELETE | `/api/admin/categories[/{id}]` | 分类管理 |
+| PUT / DELETE | `/api/admin/tags/{id}` | 标签重命名（同名合并）/ 删除 |
+| GET / PUT | `/api/admin/site` | 站点设置 |
+| PUT | `/api/admin/me/password` | 修改密码（会注销全部会话） |
 
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `WB_HOST` / `WB_PORT` | `127.0.0.1` / `8310` | 监听地址 |
-| `WB_SECRET` | `dev-secret-...` | JWT 签名密钥，**生产必须修改** |
-| `WB_DB` | `./wangblog.db` | SQLite 路径；换 PG 时替换 `app/db.py` 连接层 |
-| `WB_SEED_DIR` | `../prototype/data` | 种子数据目录（首次启动自动导入） |
-| `WB_DEMO_TOTP` | `true` | 演示模式任意 6 位数字通过；生产设 `false` 启用真实 TOTP 校验 |
-| `WB_ACCESS_TTL` / `WB_REFRESH_TTL` | `7200` / `1209600` | 令牌有效期（秒） |
-| `WB_LOGIN_MAX_FAILS` / `WB_LOGIN_LOCK_MINUTES` | `5` / `15` | 登录失败锁定策略 |
-| `WB_SEARCH_RATE` / `WB_COMMENT_RATE` | `20` / `5` | 搜索（次/分钟/IP）与评论（条/小时/IP）限流 |
-| `WB_UPLOAD_DIR` / `WB_UPLOAD_MAX_BYTES` | `./uploads` / `5242880` | 上传目录与大小限制 |
-| `WB_CERT_DAYS` | `12` | 看板证书剩余天数（生产由监控注入） |
-| `WB_PUBLISH_STEP_DELAY` | `0.3` | 发布流水线每步模拟耗时（秒） |
+## 错误码
 
-## 架构映射说明
-
-| 架构文档设计 | 本实现 | 生产切换点 |
-|---|---|---|
-| PostgreSQL 16 | SQLite（同一 SQL 层） | 替换 `app/db.py` 连接与占位符 |
-| Redis（L2 缓存/锁定/限流） | 进程内 `TTLCache` / 计数器 | `app/services.py` 接口不变，实现换 redis-py |
-| RabbitMQ + worker | `asyncio.Queue` + 后台协程 | 事件名/载荷不变（`post.published` 等），换 aio-pika |
-| Elasticsearch + IK | SQL `LIKE` + 服务端 `<mark>` 高亮 | 替换 `routers_public.search` 查询实现，响应契约不变 |
-| OSS / MinIO | 本地 `uploads/` 目录 + StaticFiles | 替换 `routers_admin.uploads` 的写入为 put_object |
-| 网关限流/WAF | 服务层兜底限流 | 生产在 APISIX/Kong 收口 |
-
-## 集成测试
-
-```bash
-# 服务运行中执行：
-python tests/test_integration.py            # 默认打 http://127.0.0.1:8310
-WB_BASE=http://127.0.0.1:8310 python tests/test_integration.py
-```
-
-覆盖：健康检查、站点配置、文章列表/详情（含 ETag/304）、评论提交（关键词/频控/幂等）、
-分类标签、搜索高亮与排序、事件采集、认证全流程（40103/42301 锁定/TOTP/刷新轮换）、
-后台文章 CRUD、草稿版本、发布流水线、批量操作、上传（含 415/413）、评论审核联动、看板聚合。
+`40001` 参数错误 · `40101` 未登录/令牌过期 · `40103` 用户名或密码错误 · `40401` 不存在 · `40901` slug 冲突 · `40902` 编辑冲突 · `41301` 文件过大 · `41501` 文件类型不支持 · `42301` 账户锁定 · `42901` 请求过于频繁 · `50001` 服务内部错误

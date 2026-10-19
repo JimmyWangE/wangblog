@@ -1,0 +1,94 @@
+{
+  "site": {
+    "name": "向明笔记",
+    "slogan": "写作即思考",
+    "description": "JimmyWang 的个人技术博客：前端、运维与内容主权的工程化实践。",
+    "icp": "浙ICP备2026XXXXXX号-1",
+    "policeIcp": "浙公网安备 3301XXXXXXXX号",
+    "url": "",
+    "author": "JimmyWang",
+    "startDate": "2021-06-01",
+    "logoText": "W"
+  },
+  "home": {
+    "eyebrow": "Personal Tech Journal · Since 2021",
+    "titleLines": [
+      "写作即思考，",
+      "记录一名工程师的",
+      "长期主义。"
+    ],
+    "highlight": "长期主义",
+    "desc": "我是 JimmyWang，一名全栈工程师。这里记录前端技术、运维实践与关于内容主权的思考。所有文章以 Markdown 为唯一事实源——内容永远属于作者。",
+    "typing": [
+      "前端工程化",
+      "运维与自建",
+      "性能优化",
+      "内容主权"
+    ],
+    "ctas": [
+      {
+        "label": "开始阅读",
+        "href": "/archive",
+        "primary": true
+      },
+      {
+        "label": "关于我",
+        "href": "/about"
+      }
+    ]
+  },
+  "about": {
+    "author": {
+      "avatarText": "J",
+      "name": "JimmyWang",
+      "bio": "全栈工程师 · 写作者 · 长期主义者。白天写代码，晚上写字，相信内容应该属于作者自己。",
+      "email": "1546795986@qq.com",
+      "links": [
+        {
+          "label": "GitHub",
+          "href": "https://github.com/JimmyWangE"
+        },
+        {
+          "label": "RSS",
+          "href": "/rss.xml"
+        }
+      ]
+    },
+    "blogIntro": "本站为自研系统：内容以 Markdown 为唯一事实源，后端 FastAPI + SQLite，前端为无构建的原生 JavaScript 单页应用，编辑器支持 Typora 式即时渲染。\n任何时刻我都可以在 2 小时内把整站搬到另一台机器上——这是「数据主权」对我的意义。",
+    "friendLinks": [
+      {
+        "name": "阮一峰的网络日志",
+        "href": "https://www.ruanyifeng.com/blog/",
+        "desc": "科技爱好者周刊"
+      },
+      {
+        "name": "MDN Web Docs",
+        "href": "https://developer.mozilla.org/",
+        "desc": "Web 技术权威文档"
+      },
+      {
+        "name": "web.dev",
+        "href": "https://web.dev/",
+        "desc": "现代 Web 性能实践"
+      }
+    ]
+  },
+  "notFound": {
+    "title": "这个页面不存在，或已被移动",
+    "desc": "链接可能已过期。试试搜索，或者看看最近的热门文章："
+  },
+  "search": {
+    "placeholder": "搜索标题、正文、标签…",
+    "hotTags": [
+      "性能优化",
+      "数据主权",
+      "Docker",
+      "CSS"
+    ]
+  },
+  "categories": {
+    "前端": "浏览器、CSS、性能与工程化",
+    "运维": "服务器、容器、网络与安全",
+    "随笔": "写作、复盘与长期主义"
+  }
+}

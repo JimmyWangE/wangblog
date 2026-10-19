@@ -1,60 +1,67 @@
+# WangBlog nginx 示例（HTTP）。HTTPS 需补充证书与 443 监听。
+# 目录布局：/opt/wangblog/{backend,web}
+#
+# 设计：静态资源由 nginx 直接返回；其余路径（页面路由、/api、/uploads、RSS、sitemap）
+# 交给后端——后端负责 SPA 回退并为文章页注入 <title>/description/OG/JSON-LD，利于分享与 SEO。
+
 user nginx;
 worker_processes auto;
 error_log /var/log/nginx/error.log;
 pid /run/nginx.pid;
 include /usr/share/nginx/modules/*.conf;
 
-events {
-    worker_connections 4096;
-}
+events { worker_connections 4096; }
 
 http {
     log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
-                      '$status $body_bytes_sent "$http_referer" '
-                      '"$http_user_agent" "$http_x_forwarded_for"';
+                      '$status $body_bytes_sent "$http_referer" "$http_user_agent" "$http_x_forwarded_for"';
     access_log  /var/log/nginx/access.log  main;
-    sendfile            on;
-    tcp_nopush          on;
-    keepalive_timeout   65;
-    types_hash_max_size 4096;
-    include             /etc/nginx/mime.types;
-    default_type        application/octet-stream;
-    gzip                on;
-    gzip_types          text/css application/javascript application/json image/svg+xml;
-    client_max_body_size 6m;
+    sendfile on; tcp_nopush on; keepalive_timeout 65; types_hash_max_size 4096;
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml application/rss+xml application/xml;
+    client_max_body_size 25m;   # 单次可上传多张图片（单张 ≤ 5MB）
+
+    upstream wangblog { server 127.0.0.1:8310; keepalive 16; }
 
     server {
-        listen       80 default_server;
-        server_name  _;
-        root         /opt/wangblog/prototype;
-        index        index.html;
+        listen 80 default_server;
+        server_name _;
+        root /opt/wangblog/web;
 
-        # 后端 API 反向代理
-        location /api/ {
-            proxy_pass http://127.0.0.1:8310;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_read_timeout 30s;
-        }
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
 
-        # 用户上传文件（由后端 StaticFiles 提供）
-        location ^~ /uploads/ {
-            proxy_pass http://127.0.0.1:8310;
+        # 第三方库（Vditor / KaTeX / Mermaid）：长缓存
+        location ^~ /assets/vendor/ {
             expires 30d;
-        }
-
-        # 静态资源缓存（CSS/JS/图片/字体）
-        location ~* \.(?:css|js|png|jpg|jpeg|webp|svg|ico|woff2?)$ {
-            expires 7d;
             add_header Cache-Control "public";
             try_files $uri =404;
         }
+        # 业务 JS/CSS 为无构建的 ES 模块：协商缓存，部署即时生效
+        location ^~ /assets/ {
+            add_header Cache-Control "no-cache";
+            try_files $uri =404;
+        }
+        location = /favicon.svg { expires 7d; try_files $uri =404; }
 
-        # HTML 不缓存：保证部署后即时生效（静态资源靠 ?v= 版本号做长缓存）
+        # 用户上传的图片（由后端 StaticFiles 提供）
+        location ^~ /uploads/ {
+            proxy_pass http://wangblog;
+            expires 30d;
+        }
+
+        # API、页面路由、RSS、sitemap → 后端
         location / {
-            add_header Cache-Control "no-cache, must-revalidate";
-            try_files $uri $uri/ =404;
+            proxy_pass http://wangblog;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 60s;
         }
     }
 }
