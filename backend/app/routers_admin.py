@@ -4,6 +4,7 @@ import re
 import shutil
 import uuid
 from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -590,6 +591,7 @@ def get_site():
 def put_site(body: dict, user: dict = Depends(current_user)):
     if not isinstance(body.get("site"), dict):
         raise_err(ERR_PARAM, "缺少 site 字段")
+    _validate_site_settings(body)
     links = (body.get("about") or {}).get("friendLinks")
     if isinstance(links, list):
         db.exec_("DELETE FROM friend_links")
@@ -602,6 +604,67 @@ def put_site(body: dict, user: dict = Depends(current_user)):
     cache.invalidate("site:config", "home", "taxonomy", "feed")
     _audit(user, "site.update", "")
     return ok({})
+
+
+def _validate_site_settings(body: dict) -> None:
+    """在任何写操作前验证订阅与公开联系信息，保留旧版链接配置。"""
+    def invalid(field, message):
+        raise_err(ERR_PARAM, message, {"field": field})
+
+    for name in ("name", "description"):
+        if name in body["site"] and not isinstance(body["site"][name], str):
+            invalid("site." + name, "站点名称和描述必须是文字")
+    rss = body.get("rss", {})
+    if not isinstance(rss, dict):
+        invalid("rss", "RSS 设置格式不正确")
+    language = rss.get("language", "zh-CN")
+    if not isinstance(language, str) or not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*", language):
+        invalid("rss.language", "请输入有效的订阅语言，例如 zh-CN 或 en-US")
+    limit = rss.get("itemLimit", 20)
+    if type(limit) is not int or not 1 <= limit <= 100:
+        invalid("rss.itemLimit", "RSS 文章数量须为 1–100 的整数")
+    if type(rss.get("fullContent", True)) is not bool:
+        invalid("rss.fullContent", "请选择 RSS 文章输出方式")
+    body["rss"] = {**rss, "language": language, "itemLimit": limit, "fullContent": rss.get("fullContent", True)}
+
+    home = body.get("home", {})
+    if not isinstance(home, dict):
+        invalid("home", "首页设置格式不正确")
+    for name in ("eyebrow", "desc", "highlight"):
+        if name in home and not isinstance(home[name], str):
+            invalid("home." + name, "首页文案必须是文字")
+    for name in ("titleLines", "typing"):
+        if name in home and (not isinstance(home[name], list) or not all(isinstance(v, str) for v in home[name])):
+            invalid("home." + name, "首页标题与轮播词格式不正确")
+    about = body.get("about", {})
+    if not isinstance(about, dict) or not isinstance(about.get("author", {}), dict):
+        invalid("about.author", "作者资料格式不正确")
+    author = about.get("author", {})
+    if "email" in author:
+        email = author["email"]
+        if not isinstance(email, str) or (email.strip() and not re.fullmatch(r"[^@\s<>:]+@[^@\s<>:]+\.[^@\s<>:]+", email.strip())):
+            invalid("about.author.email", "请输入有效的联系邮箱")
+        author["email"] = email.strip()
+    if "github" in author:
+        github = author["github"]
+        if not isinstance(github, str):
+            invalid("about.author.github", "请输入有效的 GitHub 地址")
+        github = github.strip()
+        try:
+            parsed = urlsplit(github)
+            valid = parsed.scheme in ("http", "https") and bool(parsed.hostname) and not parsed.username and not parsed.password
+        except ValueError:
+            valid = False
+        if github and (not valid or re.search(r"[\s<>]", github)):
+            invalid("about.author.github", "GitHub 地址必须为完整的 http 或 https 链接")
+        links = author.get("links", [])
+        if not isinstance(links, list) or not all(isinstance(link, dict) for link in links):
+            invalid("about.author.links", "作者链接格式不正确")
+        author["github"] = github
+        # 首页和关于页继续读取既有 links 契约；清空地址时只移除 GitHub。
+        author["links"] = [link for link in links if not re.search("github", str(link.get("label", "")), re.I)]
+        if github:
+            author["links"].insert(0, {"label": "GitHub", "href": github})
 
 
 class PasswordIn(BaseModel):

@@ -218,6 +218,88 @@ def test_taxonomy_and_site_admin():
     assert len(dash["trend"]) == 30 and dash["posts"]["published"] > 0
 
 
+def test_site_settings_sync_home_contacts_and_rss():
+    import copy
+    import xml.etree.ElementTree as ET
+
+    c, h = client(), H(login())
+    original = c.get("/api/admin/site", headers=h).json()["data"]
+    body = copy.deepcopy(original)
+    host = {"Host": "lawrencewang.xyz"}
+    c.get("/rss.xml", headers=host)  # Prime cache: saving must invalidate this response.
+    body["site"].update(name="笔记 & 思考 <测试>", description="新的 RSS 与首页简介 & 链接")
+    body["home"].update(titleLines=["新的首页标题", "保持 <文字>"], desc="首页介绍 & 日常", typing=["写作", "技术"])
+    body["about"]["author"].update(github="https://github.com/example?tab=repositories&view=all", email="writer@example.com")
+    body["rss"] = {"language": "en-US", "itemLimit": 1, "fullContent": False}
+    try:
+        assert c.put("/api/admin/site", headers=h, json=body).json()["code"] == 0
+        public = c.get("/api/site/config").json()["data"]
+        assert public["home"] == body["home"]
+        github = [link for link in public["about"]["author"]["links"] if link["label"] == "GitHub"]
+        assert github == [{"label": "GitHub", "href": body["about"]["author"]["github"]}]
+        assert public["about"]["author"]["email"] == "writer@example.com"
+        channel = ET.fromstring(c.get("/rss.xml", headers=host).content).find("channel")
+        assert channel.findtext("title") == body["site"]["name"]
+        assert channel.findtext("description") == body["site"]["description"]
+        assert channel.findtext("language") == "en-US"
+        assert "writer@example.com" in channel.findtext("managingEditor")
+        related = channel.find("{http://www.w3.org/2005/Atom}link[@rel='related']")
+        assert related.attrib["href"] == body["about"]["author"]["github"]
+        assert channel.find("{urn:wangblog:site}homepage/{urn:wangblog:site}title").text == "\n".join(body["home"]["titleLines"])
+        assert len(channel.findall("item")) == 1
+        assert channel.find("item/{http://purl.org/rss/1.0/modules/content/}encoded") is None
+        assert "笔记 &amp; 思考 &lt;测试&gt;" in c.get("/", headers=host).text
+    finally:
+        assert c.put("/api/admin/site", headers=h, json=original).json()["code"] == 0
+
+
+def test_rss_legacy_links_full_text_and_contact_removal():
+    import copy
+    import xml.etree.ElementTree as ET
+
+    c, h = client(), H(login())
+    original = c.get("/api/admin/site", headers=h).json()["data"]
+    body = copy.deepcopy(original)
+    author = body["about"]["author"]
+    author.pop("github", None)
+    author["links"] = [{"label": "GitHub", "href": "https://github.com/legacy"}, {"label": "RSS", "href": "/rss.xml"}]
+    body["rss"] = {"language": "zh-CN", "itemLimit": 2, "fullContent": True}
+    try:
+        assert c.put("/api/admin/site", headers=h, json=body).json()["code"] == 0
+        feed = ET.fromstring(c.get("/feed").content)
+        related = feed.find("channel/{http://www.w3.org/2005/Atom}link[@rel='related']")
+        assert related.attrib["href"] == "https://github.com/legacy"
+        assert feed.find("channel/item/{http://purl.org/rss/1.0/modules/content/}encoded") is not None
+        author.update(github="", email="")
+        assert c.put("/api/admin/site", headers=h, json=body).json()["code"] == 0
+        public = c.get("/api/site/config").json()["data"]
+        assert public["about"]["author"]["links"] == [{"label": "RSS", "href": "/rss.xml"}]
+        channel = ET.fromstring(c.get("/rss.xml").content).find("channel")
+        assert channel.find("managingEditor") is None
+        assert channel.find("{http://www.w3.org/2005/Atom}link[@rel='related']") is None
+    finally:
+        assert c.put("/api/admin/site", headers=h, json=original).json()["code"] == 0
+
+
+def test_invalid_feed_and_contact_settings_do_not_write():
+    import copy
+
+    c, h = client(), H(login())
+    original = c.get("/api/admin/site", headers=h).json()["data"]
+    invalid = [("rss", "itemLimit", 0), ("rss", "itemLimit", 101), ("rss", "itemLimit", True),
+               ("rss", "language", "<invalid>"), ("rss", "fullContent", "false"),
+               ("author", "github", "javascript:alert(1)"), ("author", "email", "bad\naddress@example.com")]
+    for section, key, value in invalid:
+        body = copy.deepcopy(original)
+        target = body.setdefault("rss", {}) if section == "rss" else body["about"]["author"]
+        target[key] = value
+        body["about"]["friendLinks"] = []
+        response = c.put("/api/admin/site", headers=h, json=body)
+        assert response.status_code == 400 and response.json()["code"] == 40001
+        assert c.get("/api/admin/site", headers=h).json()["data"] == original
+    assert c.put("/api/admin/site", json=original).status_code == 401
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_") and callable(f)]
     failed = 0

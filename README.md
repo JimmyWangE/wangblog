@@ -107,6 +107,10 @@ cd backend && .venv/bin/python -m uvicorn app.main:app --port 8310
 
 ## 配置
 
+后台侧栏的 **RSS 与首页** 打开统一设置表单（`/admin/rss`）。在这里可修改站点名称与描述、首页标题与简介、作者资料、GitHub 地址及邮箱，以及 RSS 的语言、文章数量和全文/摘要模式。保存后刷新首页即可看到文案和图标链接变化，`/rss.xml` 与 `/feed` 同步更新。留空 GitHub 或邮箱可隐藏对应图标。
+
+RSS 标题与简介沿用站点名称和描述；GitHub 使用 Atom related link，邮箱使用 RSS managingEditor，首页文案以 `urn:wangblog:site` 命名空间扩展输出。订阅文章来自已发布文章。所有配置统一保存在现有站点设置中，无需手工维护 XML 文件。
+
 完整说明见 `backend/app/config.py`。常用：
 
 | 变量 | 默认 | 说明 |
