@@ -46,21 +46,41 @@ def rss(request: Request):
     key = f"feed:rss:{base}"
     xml = cache.get(key)
     if not xml:
-        cfg = site_config_data().get("site", {})
+        config = site_config_data()
+        cfg = config.get("site", {})
+        options = config.get("rss", {})
+        author = config.get("about", {}).get("author", {})
+        home = config.get("home", {})
+        limit = options.get("itemLimit", 20)
+        full_content = options.get("fullContent", True)
+        github = author.get("github", next((link.get("href", "") for link in author.get("links", [])
+                                             if re.search("github", link.get("label", ""), re.I)), ""))
+        github_link = (f'<atom:link href="{html.escape(github)}" rel="related" type="text/html" title="GitHub"/>'
+                       if github else "")
+        email = author.get("email", "")
+        contact = (f'<managingEditor>{html.escape(email)} ({html.escape(author.get("name") or cfg.get("author", ""))})</managingEditor>'
+                   if email else "")
+        homepage = (f'<wb:homepage><wb:eyebrow>{html.escape(home.get("eyebrow", ""))}</wb:eyebrow>'
+                    f'<wb:title>{html.escape(chr(10).join(home.get("titleLines", [])))}</wb:title>'
+                    f'<wb:description>{html.escape(home.get("desc", ""))}</wb:description>'
+                    f'<wb:highlight>{html.escape(home.get("highlight", ""))}</wb:highlight>'
+                    '<wb:typing>' + ''.join(f'<wb:topic>{html.escape(topic)}</wb:topic>' for topic in home.get("typing", []))
+                    + '</wb:typing></wb:homepage>')
         rows = db.q(f"""SELECT p.slug,p.title,p.excerpt,p.content_html,p.published_at,c.name AS category FROM posts p
                         LEFT JOIN categories c ON c.id=p.category_id WHERE {PUB_SQL}
-                        ORDER BY p.published_at DESC LIMIT 20""")
+                        ORDER BY p.published_at DESC LIMIT ?""", (limit,))
         items = "".join(
             f"""<item><title>{html.escape(r['title'])}</title><link>{base}/post/{r['slug']}</link>
 <guid isPermaLink="true">{base}/post/{r['slug']}</guid><pubDate>{_rfc822(r['published_at'] or '')}</pubDate>
 <category>{html.escape(r['category'] or '')}</category><description>{html.escape(r['excerpt'] or '')}</description>
-<content:encoded><![CDATA[{(r['content_html'] or '').replace(']]>', ']]&gt;')}]]></content:encoded></item>"""
+{('<content:encoded><![CDATA[' + (r['content_html'] or '').replace(']]>', ']]&gt;') + ']]></content:encoded>') if full_content else ''}</item>"""
             for r in rows)
         xml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom">
-<channel><title>{html.escape(cfg.get('name', 'WangBlog'))}</title><link>{base}/</link>
-<atom:link href="{base}/rss.xml" rel="self" type="application/rss+xml"/>
-<description>{html.escape(cfg.get('description', ''))}</description><language>zh-CN</language>{items}</channel></rss>"""
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:wb="urn:wangblog:site">
+<channel><title>{html.escape(cfg.get('name', 'WangBlog'))}</title><link>{html.escape(base)}/</link>
+<atom:link href="{html.escape(base)}/rss.xml" rel="self" type="application/rss+xml"/>
+<description>{html.escape(cfg.get('description', ''))}</description><language>{html.escape(options.get('language', 'zh-CN'))}</language>
+{github_link}{contact}{homepage}{items}</channel></rss>"""
         cache.set(key, xml, 600)
     return Response(xml, media_type="application/rss+xml; charset=utf-8")
 

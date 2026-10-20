@@ -42,7 +42,7 @@ function shell() {
       <div class="aside__group">Site</div>
       <nav class="aside__nav">
         <a href="/" data-native target="_blank">${icon("external")}查看站点</a>
-        <a href="/rss.xml" data-native target="_blank">${icon("rss")}RSS</a>
+        <a href="/admin/rss" data-nav="/admin/rss">${icon("rss")}RSS 与首页</a>
         <a href="/docs" data-native target="_blank">${icon("book")}API 文档</a>
       </nav>
       <div class="aside__foot">
@@ -81,7 +81,7 @@ const fullscreen = (loader) => async (_outlet, ctx) => {
 
 function updateNav(pathname) {
   root.querySelectorAll("[data-nav]").forEach((a) => {
-    const n = NAV.find((x) => x.href === a.dataset.nav);
+    const n = [...NAV, { href: "/admin/rss", match: (p) => p.startsWith("/admin/rss") }].find((x) => x.href === a.dataset.nav);
     a.classList.toggle("is-active", !!n && n.match(pathname));
   });
 }
@@ -103,6 +103,7 @@ const router = new Router({
     { path: "/comments", view: withShell(commentsView) },
     { path: "/taxonomy", view: withShell(taxonomyView) },
     { path: "/settings", view: withShell(settingsView) },
+    { path: "/rss", view: withShell(settingsView) },
     { path: "/editor/:id", view: fullscreen(() => import("./editor.js")) },
   ],
   notFound: withShell(async (main) => mount(main, html`<div class="empty"><div class="empty__title">页面不存在</div><a class="btn" href="/admin/">返回仪表盘</a></div>`)),
