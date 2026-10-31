@@ -204,7 +204,12 @@ def save_draft(post_id: str, body: DraftIn, user: dict = Depends(current_user)):
         _set_tags(post_id, body.tags)
 
     if body.contentMd is not None and body.contentMd != r["content_md"]:
-        db.rerender_post(post_id)
+        # 自动保存约每 1.2s 一次：只有线上文章需要立即重渲染（读者可见）；
+        # 草稿 / 定时文章标记为过期，发布时 publish_now() 会统一渲染，避免每次保存都跑 Markdown + Pygments 并占用数据库锁
+        if r["status"] in ("published", "pinned"):
+            db.rerender_post(post_id)
+        else:
+            db.exec_("UPDATE posts SET render_ver=0 WHERE id=?", (post_id,))
         # 版本快照：距上个版本 ≥ 10 分钟才新建，避免自动保存产生海量版本；最多保留 50 个
         last = db.q1("SELECT version_no, created_at FROM post_versions WHERE post_id=? ORDER BY version_no DESC LIMIT 1",
                      (post_id,))

@@ -2,7 +2,7 @@
 import { api, invalidate } from "../../lib/api.js";
 import { enhance, rerenderMermaid } from "../../lib/enhance.js";
 import { toast, copyText, reveal, modal } from "../../lib/ui.js";
-import { $, $$, html, raw, mount, icon, fmtDate, fmtNum, urlFor, throttle, toStr } from "../../lib/util.js";
+import { $, $$, html, raw, mount, icon, fmtDate, fmtNum, urlFor, rafThrottle, toStr } from "../../lib/util.js";
 import { state } from "../state.js";
 import { cover, miniCard, errorState } from "../components.js";
 import { notFoundView } from "./notfound.js";
@@ -121,16 +121,16 @@ function bindProgress(outlet, p, slug) {
   const bar = $(".read-progress i", outlet);
   const article = $("[data-content]", outlet);
   let finished = false;
-  const onScroll = throttle(() => {
+  const onScroll = rafThrottle(() => {
     const r = article.getBoundingClientRect();
     const total = r.height - window.innerHeight * 0.6;
     const ratio = Math.max(0, Math.min(1, -r.top / Math.max(total, 1)));
     bar.style.transform = `scaleX(${ratio})`;
     if (!finished && ratio > 0.92) { finished = true; api.track({ event: "read_finish", slug }); }
-  }, 30);
+  });
   window.addEventListener("scroll", onScroll, { passive: true });
   onScroll();
-  return () => window.removeEventListener("scroll", onScroll);
+  return () => { onScroll.cancel(); window.removeEventListener("scroll", onScroll); };
 }
 
 /* 目录高亮跟随 + 移动端目录面板 */
@@ -138,14 +138,17 @@ function bindTocSpy(outlet) {
   const links = $$("[data-toc-id]", outlet);
   const heads = links.map((a) => document.getElementById(a.dataset.tocId)).filter(Boolean);
   if (!heads.length) return null;
-  const setActive = (id) => links.forEach((a) => a.classList.toggle("is-active", a.dataset.tocId === id));
-  const onScroll = throttle(() => {
+  const toc = $("[data-toc]", outlet);
+  let curId = null;
+  const onScroll = rafThrottle(() => {
     let cur = heads[0].id;
     for (const h of heads) { if (h.getBoundingClientRect().top < 120) cur = h.id; else break; }
-    setActive(cur);
-    const active = $(".toc a.is-active", outlet);
-    if (active) { const toc = $("[data-toc]", outlet); const t = active.offsetTop - toc.clientHeight / 2; if (Math.abs(toc.scrollTop - t) > 80) toc.scrollTo({ top: t, behavior: "smooth" }); }
-  }, 80);
+    if (cur === curId) return; // 未跨越标题时不触碰 DOM
+    curId = cur;
+    let active = null;
+    links.forEach((a) => { const on = a.dataset.tocId === cur; a.classList.toggle("is-active", on); if (on) active = a; });
+    if (active && toc.clientHeight) { const t = active.offsetTop - toc.clientHeight / 2; if (Math.abs(toc.scrollTop - t) > 80) toc.scrollTo({ top: t, behavior: "smooth" }); }
+  });
   window.addEventListener("scroll", onScroll, { passive: true });
   onScroll();
   const fab = $("[data-toc-open]", outlet);
@@ -156,7 +159,7 @@ function bindTocSpy(outlet) {
       if (a) { e.preventDefault(); m.close(); document.getElementById(a.getAttribute("href").slice(1))?.scrollIntoView({ behavior: "smooth" }); }
     });
   });
-  return () => window.removeEventListener("scroll", onScroll);
+  return () => { onScroll.cancel(); window.removeEventListener("scroll", onScroll); };
 }
 
 function bindActions(outlet, p, slug) {

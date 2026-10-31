@@ -118,3 +118,40 @@ export function errorState(err, retryAttr = "data-retry") {
   return html`<div class="empty"><div class="empty__icon">${icon("zap")}</div><div class="empty__title">加载失败</div>
     <p>${err?.message || "请稍后重试"}</p><button class="btn btn--sm" ${raw(retryAttr)}>${icon("refresh")}重试</button></div>`;
 }
+
+/* 写作热力图（GitHub 贡献图式）：列为周、行为周日~周六；一次性拼接字符串渲染，无逐格监听 */
+const ACT_LEVEL = (c) => (c <= 0 ? 0 : c <= 2 ? 1 : c <= 5 ? 2 : c <= 9 ? 3 : 4);
+const parseDay = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+export function activityGraph(act) {
+  const days = act?.days || [];
+  if (!days.length) return "";
+  const lead = parseDay(days[0].date).getDay(); // 首列从周日开始，前面补空格
+  const cols = Math.ceil((lead + days.length) / 7);
+  let cells = "<i class=\"pad\"></i>".repeat(lead);
+  const months = [];
+  let lastMonth = -1;
+  days.forEach((d, i) => {
+    const date = parseDay(d.date);
+    const col = Math.floor((lead + i) / 7);
+    if (date.getMonth() !== lastMonth && (date.getDate() <= 7 || i === 0)) {
+      lastMonth = date.getMonth();
+      // 首列月份若只剩几天，标签会与下一个月重叠，跳过
+      if (!(i === 0 && date.getDate() > 21)) months.push(`<span style="grid-column:${col + 1}">${date.getMonth() + 1}月</span>`);
+    }
+    cells += `<i class="l${ACT_LEVEL(d.count)}" data-d="${d.date}" data-c="${d.count}"></i>`;
+  });
+  return html`<section class="card card--pad activity">
+    <div class="activity__head">
+      <div class="card__title" style="margin:0">${icon("chart")}写作足迹</div>
+      <div class="activity__sum">过去一年 <b>${act.total}</b> 次写作 · 活跃 <b>${act.activeDays}</b> 天 · 最长连续 <b>${act.longestStreak}</b> 天</div>
+    </div>
+    <div class="activity__scroll" data-act-scroll>
+      <div class="activity__graph" style="--cols:${cols}">
+        <div class="activity__months">${raw(months.join(""))}</div>
+        <div class="activity__wk" aria-hidden="true"><span></span><span>一</span><span></span><span>三</span><span></span><span>五</span><span></span></div>
+        <div class="activity__cells" role="img" aria-label="过去一年共 ${act.total} 次写作">${raw(cells)}</div>
+      </div>
+    </div>
+    <div class="activity__legend"><span>发布文章与写作快照（每 10 分钟一次）计入</span><span class="grow"></span>少<i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i>多</div>
+  </section>`;
+}

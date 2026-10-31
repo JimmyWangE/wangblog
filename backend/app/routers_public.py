@@ -14,7 +14,7 @@
 """
 import hashlib
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -106,6 +106,33 @@ def taxonomy():
     return ok(taxonomy_data())
 
 
+# ---------------------------------------------------------------- 写作热力图
+ACTIVITY_DAYS = 371  # 53 周
+
+
+def activity_data() -> dict:
+    """近一年每日写作次数（GitHub 贡献图）：已发布文章的发布日 + 自动保存产生的版本快照。只输出计数。"""
+    today = datetime.now().date()
+    since = (today - timedelta(days=ACTIVITY_DAYS - 1)).strftime("%Y-%m-%d")
+    rows = db.q(f"""SELECT substr(published_at,1,10) AS d, COUNT(*) AS c FROM posts p
+                    WHERE {PUB_SQL} AND published_at >= ? GROUP BY d
+                    UNION ALL
+                    SELECT substr(created_at,1,10) AS d, COUNT(*) AS c FROM post_versions
+                    WHERE created_at >= ? GROUP BY d""", (since, since))
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["d"]] = counts.get(r["d"], 0) + r["c"]
+    days, longest, run = [], 0, 0
+    for i in range(ACTIVITY_DAYS):
+        d = (today - timedelta(days=ACTIVITY_DAYS - 1 - i)).strftime("%Y-%m-%d")
+        c = counts.get(d, 0)
+        run = run + 1 if c else 0
+        longest = max(longest, run)
+        days.append({"date": d, "count": c})
+    return {"days": days, "total": sum(x["count"] for x in days), "longestStreak": longest,
+            "activeDays": sum(1 for x in days if x["count"])}
+
+
 # ---------------------------------------------------------------- 首页聚合
 @router.get("/home")
 def home():
@@ -126,6 +153,7 @@ def home():
                             "timeAgo": time_ago(c["created_at"]), "isAuthor": bool(c["is_author"]),
                             "slug": c["slug"], "title": c["title"]} for c in recent_comments],
         "categories": tax["categories"], "tags": tax["tags"][:24], "stats": tax["stats"],
+        "activity": activity_data(),
     }
     cache.set("home", data, LIST_TTL)
     return ok(data)

@@ -1,7 +1,7 @@
 /* ==========================================================================
  * 轻量 History 路由
  * - 拦截站内 <a> 点击，pushState 切换视图，不整页刷新
- * - 支持 :param 路由、查询参数、滚动位置恢复、View Transitions 动画
+ * - 支持 :param 路由、查询参数、滚动位置恢复
  * - 每个视图返回可选的清理函数（解绑事件、停止动画）
  * ========================================================================== */
 export class Router {
@@ -73,10 +73,10 @@ export class Router {
       if (token !== this.token) { if (typeof result === "function") result(); return; }
       this.cleanup = typeof result === "function" ? result : null;
     };
+    // 不使用 View Transitions：其回调要等视图里的网络请求完成，期间页面被冻结为截图、无法交互。
+    // 视图自带骨架屏与 .view-enter 入场动画，直接切换更跟手。
     try {
-      const vt = document.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches && this.current;
-      if (vt) await document.startViewTransition(swap).updateCallbackDone;
-      else await swap();
+      await swap();
     } catch (err) {
       console.error(err);
     }

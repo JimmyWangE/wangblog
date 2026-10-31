@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#05060a">
+<meta name="theme-color" content="#f7f8fc">
 <meta name="robots" content="noindex, nofollow">
 <title>管理后台 — 向明笔记</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -13,6 +13,19 @@
 <link rel="stylesheet" href="/assets/css/base.css">
 <link rel="stylesheet" href="/assets/css/prose.css">
 <link rel="stylesheet" href="/assets/css/admin.css">
+<!-- 预加载全部 ES 模块，避免 import 逐层发现造成的请求瀑布 -->
+<link rel="modulepreload" href="/assets/js/admin/main.js">
+<link rel="modulepreload" href="/assets/js/lib/api.js">
+<link rel="modulepreload" href="/assets/js/lib/router.js">
+<link rel="modulepreload" href="/assets/js/lib/ui.js">
+<link rel="modulepreload" href="/assets/js/lib/util.js">
+<link rel="modulepreload" href="/assets/js/admin/state.js">
+<link rel="modulepreload" href="/assets/js/admin/views/login.js">
+<link rel="modulepreload" href="/assets/js/admin/views/dashboard.js">
+<link rel="modulepreload" href="/assets/js/admin/views/posts.js">
+<link rel="modulepreload" href="/assets/js/admin/views/comments.js">
+<link rel="modulepreload" href="/assets/js/admin/views/taxonomy.js">
+<link rel="modulepreload" href="/assets/js/admin/views/settings.js">
 </head>
 <body class="admin">
 <div class="ambient" aria-hidden="true"><div class="ambient__grid"></div><div class="ambient__blob ambient__blob--1"></div></div>

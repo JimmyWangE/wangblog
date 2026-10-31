@@ -4,7 +4,7 @@
 import { api } from "../lib/api.js";
 import { Router } from "../lib/router.js";
 import { theme, toast, initSpotlight, routeBar } from "../lib/ui.js";
-import { $, $$, html, raw, mount, icon, debounce, urlFor, throttle } from "../lib/util.js";
+import { $, $$, html, raw, mount, icon, debounce, urlFor, rafThrottle } from "../lib/util.js";
 import { state } from "./state.js";
 import { homeView } from "./views/home.js";
 import { postView } from "./views/post.js";
@@ -84,14 +84,14 @@ function renderShell() {
   // 顶栏：滚动变玻璃态，向下滚动隐藏
   const header = $("#header");
   let lastY = 0;
-  const onScroll = throttle(() => {
+  const onScroll = rafThrottle(() => {
     const y = window.scrollY;
     header.classList.toggle("is-scrolled", y > 10);
-    header.classList.toggle("is-hidden", y > 480 && y > lastY + 4 && !document.querySelector(".palette"));
-    if (y < lastY - 4 || y < 480) header.classList.remove("is-hidden");
+    if (y > 480 && y > lastY + 4 && !paletteOpen) header.classList.add("is-hidden");
+    else if (y < lastY - 4 || y < 480) header.classList.remove("is-hidden");
     top.classList.toggle("is-visible", y > 900);
-    lastY = y;
-  }, 80);
+    if (Math.abs(y - lastY) > 4 || y < 480) lastY = y; // 逐帧触发时位移很小，累积超过阈值再更新方向基准
+  });
   window.addEventListener("scroll", onScroll, { passive: true });
 }
 
