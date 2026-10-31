@@ -89,7 +89,14 @@ def test_detail_render_toc_etag():
     assert d["toc"] and d["toc"][0]["level"] == 2
     assert d["contentHtml"].count("<div") == d["contentHtml"].count("</div>")  # 结构闭合
     assert c.get("/api/posts/http-cache-deep-dive", headers={"If-None-Match": r.headers["etag"]}).status_code == 304
-    assert c.get("/api/posts/font-subsetting").status_code == 404  # 定时文章未到点不可见
+    # 使用明确的未来时间，避免演示文章的固定日期过去后被调度器发布导致测试失效。
+    h = H(login())
+    pid = _visibility_post(c, h, "not-yet-due-scheduled-test")
+    try:
+        _publish_visibility_post(c, h, pid, "schedule", "2099-01-01T12:00")
+        assert c.get("/api/posts/not-yet-due-scheduled-test").status_code == 404
+    finally:
+        c.delete(f"/api/admin/posts/{pid}", headers=h)
     assert c.get("/api/posts/structured-data-article").status_code == 404  # 草稿不可见
 
 
