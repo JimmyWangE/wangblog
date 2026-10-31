@@ -42,6 +42,13 @@ export const throttle = (fn, ms = 100) => {
     else t = setTimeout(() => { last = Date.now(); fn(...a); }, ms - (now - last));
   };
 };
+/** 每帧最多执行一次（滚动 / 指针等高频事件），与渲染节奏对齐 */
+export const rafThrottle = (fn) => {
+  let id = 0, args;
+  const r = (...a) => { args = a; if (!id) id = requestAnimationFrame(() => { id = 0; fn(...args); }); };
+  r.cancel = () => { cancelAnimationFrame(id); id = 0; };
+  return r;
+};
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export function fmtNum(n) {

@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -52,6 +53,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="向明笔记 API", version="2.0.0", lifespan=lifespan, docs_url="/docs", openapi_url="/openapi.json")
+
+# 直接由后端托管前端时压缩 JS / CSS / JSON（vditor、lute、mermaid 体积较大）；nginx 部署时由 nginx gzip 负责
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 if settings.CORS_ORIGINS:
     app.add_middleware(CORSMiddleware, allow_origins=settings.CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])

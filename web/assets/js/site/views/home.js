@@ -1,9 +1,9 @@
 /* 首页：Hero（粒子网络 + 打字机 + 终端卡片 + 数据计数）→ 置顶精选 → 分类筛选的无限列表 + 侧栏 */
 import { api } from "../../lib/api.js";
 import { reveal, countUp } from "../../lib/ui.js";
-import { $, $$, html, mount, icon, fmtNum, fmtDate, urlFor, toStr } from "../../lib/util.js";
+import { $, $$, html, mount, icon, fmtNum, fmtDate, urlFor, toStr, debounce } from "../../lib/util.js";
 import { state } from "../state.js";
-import { postCard, postCardSkeleton, featuredCard, authorCard, hotList, tagCloud, recentComments, emptyState, errorState } from "../components.js";
+import { postCard, postCardSkeleton, featuredCard, authorCard, hotList, tagCloud, recentComments, emptyState, errorState, activityGraph } from "../components.js";
 
 export async function homeView(outlet) {
   const site = state.site;
@@ -49,6 +49,8 @@ export async function homeView(outlet) {
     </div>
   </section>
 
+  <section class="section container activity-wrap" data-activity></section>
+
   <section class="section container" data-featured-wrap></section>
 
   <section class="section container">
@@ -73,6 +75,14 @@ export async function homeView(outlet) {
 
   const st = home.stats || {};
   $$("[data-count]", outlet).forEach((el) => countUp(el, st[el.dataset.count] || 0, { format: (n) => (n >= 10000 ? fmtNum(n) : n.toLocaleString()) }));
+
+  const actWrap = $("[data-activity]", outlet);
+  if (home.activity?.days?.length) {
+    mount(actWrap, activityGraph(home.activity));
+    const sc = $("[data-act-scroll]", actWrap);
+    sc.scrollLeft = sc.scrollWidth; // 窄屏时默认显示最近的日期
+    cleanups.push(bindActivityTip(actWrap));
+  } else actWrap.remove();
 
   if (home.featured?.length) {
     mount($("[data-featured-wrap]", outlet), html`<div class="section__head"><div><h2 class="section__title"><span class="idx">01</span>置顶精选</h2></div></div>
@@ -132,6 +142,26 @@ export async function homeView(outlet) {
   return () => { io.disconnect(); cleanups.forEach((f) => f()); };
 }
 
+/* 热力图悬停提示：单个浮层 + 事件委托 */
+function bindActivityTip(root) {
+  let tip = null;
+  const hide = () => { tip?.remove(); tip = null; };
+  const onOver = (e) => {
+    const cell = e.target.closest?.("i[data-d]");
+    if (!cell) return hide();
+    if (!tip) { tip = document.createElement("div"); tip.className = "activity-tip"; document.body.appendChild(tip); }
+    const n = Number(cell.dataset.c);
+    tip.textContent = `${n ? n + " 次写作" : "没有写作"} · ${cell.dataset.d}`;
+    const r = cell.getBoundingClientRect();
+    tip.style.left = `${r.left + r.width / 2}px`;
+    tip.style.top = `${r.top - 8}px`;
+  };
+  root.addEventListener("pointerover", onOver);
+  root.addEventListener("pointerleave", hide);
+  window.addEventListener("scroll", hide, { passive: true });
+  return () => { hide(); root.removeEventListener("pointerover", onOver); root.removeEventListener("pointerleave", hide); window.removeEventListener("scroll", hide); };
+}
+
 function renderTerminal(el, home, st) {
   const posts = [...(home.featured || []), ...(home.hot || [])].filter((p, i, a) => a.findIndex((x) => x.slug === p.slug) === i)
     .sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 6);
@@ -162,54 +192,82 @@ function startTyping(el, words) {
   return () => clearTimeout(t);
 }
 
-/* 粒子网络：节点缓慢漂移，近邻连线，鼠标附近增强；页面不可见/离屏时暂停 */
+/* 粒子网络：节点缓慢漂移，近邻连线，鼠标附近增强；离屏 / 页面隐藏时停止调度帧 */
 function startParticles(canvas) {
   if (!canvas || matchMedia("(prefers-reduced-motion: reduce)").matches) return () => {};
   const ctx = canvas.getContext("2d");
-  let w, hgt, dpr, raf, pts = [], mouse = { x: -9999, y: -9999 }, visible = true;
+  const LINK = 130, LINK2 = LINK * LINK, NEAR2 = 160 * 160, PUSH2 = 140 * 140;
+  const BUCKETS = 4; // 连线按透明度分档批量描边，避免每条线单独设置 strokeStyle + stroke
+  const lowEnd = window.innerWidth < 768 || (navigator.hardwareConcurrency || 8) <= 4;
+  let w, hgt, raf = 0, pts = [], mouse = { x: -9999, y: -9999 }, inView = true;
   const resize = () => {
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, lowEnd ? 1.5 : 2);
     w = canvas.clientWidth; hgt = canvas.clientHeight;
     canvas.width = w * dpr; canvas.height = hgt * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const n = Math.min(90, Math.floor((w * hgt) / 14000));
+    const n = Math.min(lowEnd ? 30 : 60, Math.floor((w * hgt) / 16000));
     pts = Array.from({ length: n }, () => ({ x: Math.random() * w, y: Math.random() * hgt, vx: (Math.random() - .5) * .3, vy: (Math.random() - .5) * .3 }));
   };
   const color = () => (document.documentElement.dataset.theme === "light" ? "91,91,214" : "129,140,248");
+  const paths = Array.from({ length: BUCKETS }, () => []);
   const draw = () => {
+    raf = 0;
+    if (!inView || document.hidden) return;
     raf = requestAnimationFrame(draw);
-    if (!visible) return;
     ctx.clearRect(0, 0, w, hgt);
     const c = color();
     for (const p of pts) {
       p.x += p.vx; p.y += p.vy;
       if (p.x < 0 || p.x > w) p.vx *= -1;
       if (p.y < 0 || p.y > hgt) p.vy *= -1;
-      const dm = Math.hypot(p.x - mouse.x, p.y - mouse.y);
-      if (dm < 140) { p.x += (p.x - mouse.x) / dm * .6; p.y += (p.y - mouse.y) / dm * .6; }
+      const dx = p.x - mouse.x, dy = p.y - mouse.y, d2 = dx * dx + dy * dy;
+      if (d2 < PUSH2) { const dm = Math.sqrt(d2) || 1; p.x += dx / dm * .6; p.y += dy / dm * .6; }
     }
+    for (const b of paths) b.length = 0;
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i];
       for (let j = i + 1; j < pts.length; j++) {
-        const b = pts[j];
-        const d = Math.hypot(a.x - b.x, a.y - b.y);
-        if (d < 130) {
-          ctx.strokeStyle = `rgba(${c},${(1 - d / 130) * .35})`;
-          ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-        }
+        const b = pts[j], dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
+        if (d2 < LINK2) paths[Math.min(BUCKETS - 1, Math.floor((Math.sqrt(d2) / LINK) * BUCKETS))].push(a, b);
       }
-      const near = Math.hypot(a.x - mouse.x, a.y - mouse.y) < 160;
-      ctx.fillStyle = `rgba(${c},${near ? .95 : .55})`;
-      ctx.beginPath(); ctx.arc(a.x, a.y, near ? 2.2 : 1.4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.lineWidth = 1;
+    paths.forEach((segs, k) => {
+      if (!segs.length) return;
+      ctx.strokeStyle = `rgba(${c},${((1 - (k + .5) / BUCKETS) * .35).toFixed(3)})`;
+      ctx.beginPath();
+      for (let i = 0; i < segs.length; i += 2) { ctx.moveTo(segs[i].x, segs[i].y); ctx.lineTo(segs[i + 1].x, segs[i + 1].y); }
+      ctx.stroke();
+    });
+    const near = [];
+    ctx.fillStyle = `rgba(${c},.55)`;
+    ctx.beginPath();
+    for (const a of pts) {
+      const dx = a.x - mouse.x, dy = a.y - mouse.y;
+      if (dx * dx + dy * dy < NEAR2) { near.push(a); continue; }
+      ctx.moveTo(a.x + 1.4, a.y); ctx.arc(a.x, a.y, 1.4, 0, Math.PI * 2);
+    }
+    ctx.fill();
+    if (near.length) {
+      ctx.fillStyle = `rgba(${c},.95)`;
+      ctx.beginPath();
+      for (const a of near) { ctx.moveTo(a.x + 2.2, a.y); ctx.arc(a.x, a.y, 2.2, 0, Math.PI * 2); }
+      ctx.fill();
     }
   };
-  const onMove = (e) => { const r = canvas.getBoundingClientRect(); mouse = { x: e.clientX - r.left, y: e.clientY - r.top }; };
-  const io = new IntersectionObserver((en) => { visible = en[0].isIntersecting && !document.hidden; });
+  const kick = () => { if (!raf && inView && !document.hidden) raf = requestAnimationFrame(draw); };
+  const onMove = (e) => { if (!inView) return; const r = canvas.getBoundingClientRect(); mouse = { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const io = new IntersectionObserver((en) => { inView = en[0].isIntersecting; kick(); });
   io.observe(canvas);
+  const onResize = debounce(resize, 150);
   resize();
-  draw();
-  window.addEventListener("resize", resize);
+  kick();
+  window.addEventListener("resize", onResize);
   window.addEventListener("pointermove", onMove, { passive: true });
-  return () => { cancelAnimationFrame(raf); io.disconnect(); window.removeEventListener("resize", resize); window.removeEventListener("pointermove", onMove); };
+  document.addEventListener("visibilitychange", kick);
+  return () => {
+    cancelAnimationFrame(raf); raf = -1; inView = false; io.disconnect(); onResize.cancel();
+    window.removeEventListener("resize", onResize); window.removeEventListener("pointermove", onMove);
+    document.removeEventListener("visibilitychange", kick);
+  };
 }

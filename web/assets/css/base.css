@@ -40,6 +40,8 @@
   /* 阴影与光晕 */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
   --shadow: 0 10px 30px -10px rgba(0, 0, 0, .6);
+  /* 写作热力图（GitHub 配色） */
+  --act-0: #161b22; --act-1: #0e4429; --act-2: #006d32; --act-3: #26a641; --act-4: #39d353;
   --shadow-lg: 0 30px 60px -20px rgba(0, 0, 0, .75);
   --glow: 0 0 0 1px rgba(129, 140, 248, .25), 0 10px 40px -10px rgba(129, 140, 248, .45);
 
@@ -85,6 +87,7 @@
   --warning: #d97706;
   --danger: #dc2626;
   --shadow: 0 10px 30px -12px rgba(15, 23, 42, .18);
+  --act-0: #ebedf0; --act-1: #9be9a8; --act-2: #40c463; --act-3: #30a14e; --act-4: #216e39;
   --shadow-lg: 0 30px 60px -24px rgba(15, 23, 42, .28);
   --glow: 0 0 0 1px rgba(91, 91, 214, .2), 0 12px 40px -12px rgba(91, 91, 214, .35);
 }
@@ -134,18 +137,13 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   opacity: .55;
 }
 .ambient__blob {
-  position: absolute; width: 46vmax; height: 46vmax; border-radius: 50%; filter: blur(90px); opacity: .32;
-  animation: drift 26s var(--ease) infinite alternate;
+  /* 径向渐变本身已柔化边缘：不再叠加 filter: blur 与无限漂移动画（大面积模糊层每帧重绘是滚动卡顿的主因） */
+  position: absolute; width: 46vmax; height: 46vmax; border-radius: 50%; opacity: .32;
 }
 .ambient__blob--1 { background: radial-gradient(circle, var(--c2), transparent 65%); top: -22vmax; left: -10vmax; }
-.ambient__blob--2 { background: radial-gradient(circle, var(--c1), transparent 65%); top: -18vmax; right: -16vmax; animation-delay: -8s; opacity: .22; }
-.ambient__blob--3 { background: radial-gradient(circle, var(--c3), transparent 65%); top: 40vh; left: 35vw; animation-delay: -16s; opacity: .12; }
+.ambient__blob--2 { background: radial-gradient(circle, var(--c1), transparent 65%); top: -18vmax; right: -16vmax; opacity: .22; }
+.ambient__blob--3 { background: radial-gradient(circle, var(--c3), transparent 65%); top: 40vh; left: 35vw; opacity: .12; }
 :root[data-theme="light"] .ambient__blob { opacity: .14; }
-@keyframes drift {
-  0% { transform: translate3d(0, 0, 0) scale(1); }
-  50% { transform: translate3d(6vw, 4vh, 0) scale(1.08); }
-  100% { transform: translate3d(-4vw, 8vh, 0) scale(.95); }
-}
 
 /* ---------------------------------------------------------------- 按钮 */
 .btn {
@@ -206,7 +204,6 @@ a.tag:hover { color: var(--accent); }
 /* ---------------------------------------------------------------- 卡片 */
 .card {
   position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
 .card--pad { padding: 22px; }
 .card__title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; letter-spacing: .06em;
@@ -327,8 +324,6 @@ a.tag:hover { color: var(--accent); }
 .reveal.is-in { opacity: 1; transform: none; }
 .view-enter { animation: view-in .45s var(--ease) both; }
 @keyframes view-in { from { opacity: 0; transform: translateY(10px); } }
-::view-transition-old(root) { animation: .18s var(--ease) both fade-out; }
-::view-transition-new(root) { animation: .32s var(--ease) both view-in; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }

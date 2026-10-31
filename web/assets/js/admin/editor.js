@@ -61,7 +61,7 @@ export async function editorView(root, ctx) {
     if (bk && bk.content !== content && bk.t > Date.parse(p.rev.replace(" ", "T")) + 2000) {
       setTimeout(async () => {
         if (await confirmDialog({ title: "发现未同步的本地草稿", message: `本地有一份 ${new Date(bk.t).toLocaleString()} 的未保存内容，是否恢复？`, okText: "恢复" })) {
-          S.vditor.setValue(bk.content); if (bk.title) titleEl.value = bk.title; autoGrow(); markDirty();
+          S.vditor.setValue(bk.content); if (bk.title) titleEl.value = bk.title; autoGrow(); markDirty(null);
         } else dropBackup(S.id);
       }, 400);
     }
@@ -69,7 +69,7 @@ export async function editorView(root, ctx) {
     const bk = readBackup("new");
     if (bk?.content) setTimeout(async () => {
       if (await confirmDialog({ title: "恢复上次未保存的新文章？", message: "检测到上次新建文章时留下的本地内容。", okText: "恢复" })) {
-        S.vditor.setValue(bk.content); titleEl.value = bk.title || ""; autoGrow(); markDirty();
+        S.vditor.setValue(bk.content); titleEl.value = bk.title || ""; autoGrow(); markDirty(null);
       } else dropBackup("new");
     }, 400);
   }
@@ -103,7 +103,7 @@ export async function editorView(root, ctx) {
     <footer class="ed-status">
       <span data-st-words>0 字</span><span data-st-read></span><span data-st-lines></span>
       <span class="grow"></span>
-      <span class="ed-hide-sm">${icon("zap")}Ctrl/⌘+S 保存 · F8 专注 · 粘贴 / 拖拽图片自动上传</span>
+      <button type="button" class="ed-hide-sm ed-keys" data-shortcuts title="查看全部快捷键">${icon("zap")}Ctrl/⌘+1~6 标题 · Ctrl/⌘+S 保存 · F8 专注 · 快捷键</button>
       <span data-st-mode>${MODES.find((m) => m.id === prefs.mode)?.label}</span>
     </footer>
   </div>`);
@@ -147,7 +147,8 @@ export async function editorView(root, ctx) {
         accept: "image/png,image/jpeg,image/gif,image/webp,image/avif", multiple: true, max: 5 * 1024 * 1024,
         handler: (files) => uploadFiles(files),
       },
-      input: () => { markDirty(); scheduleStats(); },
+      // Vditor 已在内部节流后把整篇 Markdown 传进来，直接复用，避免每次输入再 getValue() 全文序列化
+      input: (md) => markDirty(md),
       after: () => resolve(v),
     });
   });
@@ -155,21 +156,29 @@ export async function editorView(root, ctx) {
 
   /* ---------------- 状态与统计 ---------------- */
   const statsEl = { words: $("[data-st-words]", root), read: $("[data-st-read]", root), lines: $("[data-st-lines]", root) };
+  // 最近一次已知的正文 Markdown；null 表示已过期，需要时再向 Vditor 取
+  let lastMd = content;
+  const curMd = () => lastMd ?? (lastMd = vd.getValue());
   const scheduleStats = debounce(() => {
-    const md = vd.getValue();
+    const md = curMd();
     const plain = md.replace(/```[\s\S]*?```/g, " ").replace(/!\[[^\]]*\]\([^)]*\)/g, " ").replace(/[#>*`~_\-|[\]()]/g, " ");
     const words = (plain.match(/[一-鿿]/g) || []).length + (plain.match(/[A-Za-z0-9]+/g) || []).length;
     statsEl.words.innerHTML = toStr(html`${icon("file")}${words.toLocaleString()} 字`);
     statsEl.read.innerHTML = toStr(html`${icon("clock")}约 ${Math.max(1, Math.round(words / 300))} 分钟`);
     statsEl.lines.textContent = `${md.split("\n").length} 行 · ${md.length.toLocaleString()} 字符`;
-  }, 200);
+  }, 300);
   scheduleStats();
 
   const setSave = (cls, text) => { saveStateEl.className = "save-state " + cls; saveStateEl.textContent = text; };
-  function markDirty() {
+  // 本地灾备：同步写 localStorage 较重，停笔后再写
+  const backupLater = debounce(() => writeBackup(S.id || "new", { title: titleEl.value, content: curMd() }), 600);
+  /** md：Vditor 传入的最新正文；null 表示正文被程序改写（需重新读取）；省略则正文未变（如只改了标题） */
+  function markDirty(md) {
+    if (md !== undefined) lastMd = md;
     S.dirty = true;
-    setSave("is-dirty", "未保存");
-    writeBackup(S.id || "new", { title: titleEl.value, content: vd.getValue() });
+    if (!saveStateEl.classList.contains("is-dirty")) setSave("is-dirty", "未保存");
+    scheduleStats();
+    backupLater();
     autoSave();
   }
   const autoSave = debounce(() => save(), 1200);
@@ -237,7 +246,7 @@ export async function editorView(root, ctx) {
       const md = d.items.map((it) => `![${it.alt}](${it.url})`).join("\n\n");
       vd.insertValue(md + "\n");
       vd.tip("上传成功", 1200);
-      markDirty();
+      markDirty(null);
       return null;
     } catch (e) {
       vd.tip(`上传失败：${e.message}`, 3000);
@@ -247,16 +256,80 @@ export async function editorView(root, ctx) {
 
   /* ---------------- 模式切换 / 面板 ---------------- */
   const internal = () => vd.vditor;
+  const tap = (el) => el.dispatchEvent(new Event(/iPhone/.test(navigator.userAgent) ? "touchstart" : "click", { bubbles: true }));
   function setMode(mode) {
     const btn = internal().toolbar.elements["edit-mode"]?.querySelector(`button[data-mode="${mode}"]`);
     if (!btn) return;
-    btn.dispatchEvent(new Event(/iPhone/.test(navigator.userAgent) ? "touchstart" : "click", { bubbles: true }));
+    tap(btn);
     prefs.mode = mode; savePrefs(prefs);
     page.className = page.className.replace(/ed-mode-\w+/, `ed-mode-${mode}`);
     $$(".seg [data-mode]", root).forEach((b) => b.classList.toggle("is-active", b.dataset.mode === mode));
     $("[data-st-mode]", root).textContent = MODES.find((m) => m.id === mode)?.label;
     setTimeout(() => vd.focus(), 30);
   }
+  /* ---------------- 标题快捷键（Typora 式 Ctrl/⌘+0~6、Ctrl/⌘+=/-） ---------------- */
+  // 分屏模式的源码区是 <textarea>：直接改写当前行行首的 #，用 insertText 保留原生撤销并触发 Vditor 同步
+  const svArea = () => (internal().currentMode === "sv" ? $("#vditor textarea.vditor-sv", root) : null);
+  function svLine(ta) {
+    const v = ta.value, pos = ta.selectionStart;
+    const start = v.lastIndexOf("\n", pos - 1) + 1;
+    const prefix = /^#{1,6}[ \t]+|^/.exec(v.slice(start))[0];
+    return { start, prefix, level: (prefix.match(/#/g) || []).length };
+  }
+  function svSetHeading(ta, level) {
+    const { start, prefix } = svLine(ta);
+    const caret = ta.selectionStart, next = level ? "#".repeat(level) + " " : "";
+    ta.focus();
+    ta.setSelectionRange(start, start + prefix.length);
+    if (!document.execCommand("insertText", false, next) && next) ta.setRangeText(next, start, start + prefix.length, "end");
+    if (!next && ta.selectionStart !== start) document.execCommand("delete");
+    const pos = Math.max(start + next.length, caret + next.length - prefix.length);
+    ta.setSelectionRange(pos, pos);
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  // 当前光标所在块的标题级别，0 为正文
+  function headingLevel() {
+    const ta = svArea();
+    if (ta) return svLine(ta).level;
+    const sel = getSelection();
+    let n = sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+    if (n?.nodeType === 3) n = n.parentElement;
+    if (!n?.closest?.("#vditor")) return 0;
+    const h = n.closest("h1,h2,h3,h4,h5,h6");
+    return h ? Number(h.tagName[1]) : 0;
+  }
+  // 即时渲染 / 所见即所得：复用 Vditor 工具栏的标题面板，由其处理 DOM 与撤销栈
+  function setHeading(level) {
+    const cur = headingLevel();
+    if (level === cur) level = 0; // 再按同级取消（Typora 行为）
+    if (level === cur) return;
+    const ta = svArea();
+    if (ta) return svSetHeading(ta, level);
+    const item = internal().toolbar.elements.headings;
+    const btn = item?.firstElementChild;
+    if (!btn || btn.classList.contains("vditor-menu--disabled")) return; // 代码块 / 表格内不可设标题
+    if (level === 0) {
+      btn.classList.add("vditor-menu--current"); // 让 Vditor 走"取消标题"分支
+      tap(btn);
+      return;
+    }
+    const target = item.querySelectorAll(".vditor-hint button")[level - 1];
+    if (target) tap(target);
+  }
+  function onHeadingKey(e) {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing) return;
+    if (!e.target.closest?.("#vditor")) return;
+    const digit = /^Digit([0-6])$/.exec(e.code);
+    let level;
+    if (digit) level = Number(digit[1]);
+    else if (e.code === "Equal" || e.key === "=" || e.key === "+") { const c = headingLevel(); level = c === 0 ? 6 : Math.max(1, c - 1); }
+    else if (e.code === "Minus" || e.key === "-") { const c = headingLevel(); if (!c) return; level = c === 6 ? 0 : c + 1; }
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+    setHeading(level);
+  }
+
   function toggle(key) {
     prefs[key] = !prefs[key]; savePrefs(prefs);
     $(`[data-toggle="${key}"]`, root)?.classList.toggle("is-on", prefs[key]);
@@ -340,6 +413,18 @@ export async function editorView(root, ctx) {
     return m;
   }
 
+  function showShortcuts() {
+    const k = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
+    const rows = [
+      [`${k} + 1 ~ 6`, "设为一 ~ 六级标题（再按一次取消）"], [`${k} + 0`, "恢复为正文"],
+      [`${k} + =`, "提升标题级别"], [`${k} + -`, "降低标题级别"],
+      [`${k} + B / I / D`, "加粗 / 斜体 / 删除线"], [`${k} + K`, "插入链接"],
+      [`${k} + S`, "立即保存"], [`${k} + Shift + P`, "发布效果预览"],
+      [`${k} + Alt + 7 / 8 / 9`, "所见即所得 / 即时渲染 / 分屏"], ["F8", "专注模式"],
+    ];
+    modal({ title: "键盘快捷键", width: 460, body: html`<table class="kbd-table">${rows.map(([a, b]) => html`<tr><td><kbd>${a}</kbd></td><td>${b}</td></tr>`)}</table>` });
+  }
+
   /* ---------------- 发布 ---------------- */
   async function publish() {
     if (!titleEl.value.trim()) { toast("请先填写标题", "warning"); titleEl.focus(); return; }
@@ -410,6 +495,7 @@ export async function editorView(root, ctx) {
     const pn = t.closest("[data-panel]");
     if (pn) return openPanel(pn.dataset.panel);
     if (t.closest("[data-preview]")) return previewRendered(vd.getValue());
+    if (t.closest("[data-shortcuts]")) return showShortcuts();
     if (t.closest("[data-publish]")) return publish();
     if (t.closest("[data-export]")) {
       const blob = new Blob([`# ${titleEl.value}\n\n${vd.getValue()}`], { type: "text/markdown" });
@@ -429,7 +515,7 @@ export async function editorView(root, ctx) {
     if (vr && await confirmDialog({ title: "恢复历史版本", message: `将正文替换为 v${vr.dataset.verRestore}，当前内容会先保存为新版本。`, okText: "恢复" })) {
       await save({ force: true });
       const v = await admin.version(S.id, vr.dataset.verRestore);
-      vd.setValue(v.contentMd); markDirty(); toast(`已恢复到 v${v.version}`, "success");
+      vd.setValue(v.contentMd); markDirty(null); toast(`已恢复到 v${v.version}`, "success");
     }
   });
 
@@ -475,6 +561,8 @@ export async function editorView(root, ctx) {
     else if (e.altKey && mod && ["7", "8", "9"].includes(e.key)) { e.preventDefault(); setMode({ 7: "wysiwyg", 8: "ir", 9: "sv" }[e.key]); }
   };
   document.addEventListener("keydown", onKey);
+  // 捕获阶段：先于 Vditor 自身与浏览器默认行为（缩放等）处理
+  document.addEventListener("keydown", onHeadingKey, true);
 
   // 拖拽遮罩提示
   let dragDepth = 0, mask = null;
@@ -500,18 +588,20 @@ export async function editorView(root, ctx) {
   window.addEventListener("themechange", onTheme);
 
   // 离开保护
-  const onBeforeUnload = (e) => { if (S.dirty) { save(); e.preventDefault(); e.returnValue = ""; } };
+  const onBeforeUnload = (e) => { if (S.dirty) { backupLater.flush(); save(); e.preventDefault(); e.returnValue = ""; } };
   window.addEventListener("beforeunload", onBeforeUnload);
-  const onVis = () => { if (document.hidden && S.dirty) save(); };
+  const onVis = () => { if (document.hidden && S.dirty) { backupLater.flush(); save(); } };
   document.addEventListener("visibilitychange", onVis);
 
   if (!titleEl.value) titleEl.focus(); else vd.focus();
   if (isNew) toast("开始写作吧：输入内容后会自动保存为草稿", "info", 2400);
 
   return () => {
-    if (S.dirty) save();
+    if (S.dirty) { backupLater.flush(); save(); }
     autoSave.cancel?.();
+    scheduleStats.cancel();
     document.removeEventListener("keydown", onKey);
+    document.removeEventListener("keydown", onHeadingKey, true);
     document.removeEventListener("dragenter", onDragEnter);
     document.removeEventListener("dragleave", onDragLeave);
     document.removeEventListener("drop", onDrop);

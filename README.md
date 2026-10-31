@@ -1,6 +1,6 @@
 # WangBlog · 向明笔记
 
-个人技术博客：深色科技风的阅读前台、Typora 式所见即所得的写作后台，以及 FastAPI + SQLite 的 REST 后端。
+个人技术博客：科技风的阅读前台、Typora 式所见即所得的写作后台，以及 FastAPI + SQLite 的 REST 后端。
 前端为**无构建步骤**的原生 ES Module 单页应用，后端一条命令即可同时提供 API 与页面。
 
 ![stack](https://img.shields.io/badge/FastAPI-SQLite-6366f1) ![stack](https://img.shields.io/badge/前端-原生%20ES%20Modules%20SPA-22d3ee) ![stack](https://img.shields.io/badge/编辑器-Vditor%20IR-c084fc)
@@ -24,7 +24,7 @@
 - 文章页：阅读进度、目录跟随高亮、代码一键复制、长代码折叠、图片灯箱、公式与图表懒加载、点赞、上下篇、相关推荐。
 - 评论：无刷新提交与回复（两级楼中楼）、Markdown 安全子集、蜜罐 + 频控 + 关键词风控、先审后发。
 - 归档时间线（分类 / 标签筛选可分享）、分类与标签总览、`⌘K` / `/` 全局搜索面板与搜索页。
-- 深色为默认主题，可切换浅色；桌面与移动端响应式。
+- 浅色为默认主题，可切换深色；桌面与移动端响应式。
 - SEO：后端为文章路由注入 title / description / OG / JSON-LD；RSS（全文）、sitemap、robots。
 
 **后台管理**

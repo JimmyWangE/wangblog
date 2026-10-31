@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS post_tags(post_id TEXT NOT NULL, tag_id TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS post_versions(
   id INTEGER PRIMARY KEY AUTOINCREMENT, post_id TEXT NOT NULL, content_md TEXT NOT NULL,
   version_no INTEGER NOT NULL, created_at TEXT NOT NULL, UNIQUE(post_id, version_no));
+CREATE INDEX IF NOT EXISTS idx_versions_created ON post_versions(created_at);
 CREATE TABLE IF NOT EXISTS comments(
   id TEXT PRIMARY KEY, post_id TEXT NOT NULL REFERENCES posts(id), parent_id TEXT,
   author_name TEXT NOT NULL, author_email TEXT, author_ip TEXT,

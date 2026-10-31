@@ -1,10 +1,10 @@
 /* 通用 UI：主题、Toast、Modal/确认框、滚动显现、光斑、计数动画 */
 import { esc, icon, toStr } from "./util.js";
 
-/* ---------------- 主题（默认深色） ---------------- */
+/* ---------------- 主题（默认浅色） ---------------- */
 const THEME_KEY = "wb-theme";
 export const theme = {
-  get: () => document.documentElement.dataset.theme || "dark",
+  get: () => document.documentElement.dataset.theme || "light",
   set(t) {
     document.documentElement.dataset.theme = t;
     try { localStorage.setItem(THEME_KEY, t); } catch { /* noop */ }

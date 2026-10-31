@@ -62,6 +62,12 @@ def test_health_and_home():
     assert c.get("/api/health").json()["data"]["status"] == "up"
     d = c.get("/api/home").json()["data"]
     assert d["featured"] and d["hot"] and d["stats"]["posts"] > 0
+    act = d["activity"]
+    assert len(act["days"]) == 371 and act["days"][-1]["date"] == time.strftime("%Y-%m-%d")
+    assert act["total"] == sum(x["count"] for x in act["days"]) and act["activeDays"] <= 371
+    # 大响应应被 gzip 压缩
+    r = c.get("/assets/vendor/vditor/dist/index.min.js", headers={"Accept-Encoding": "gzip"})
+    assert r.status_code == 200 and r.headers.get("content-encoding") == "gzip"
 
 
 def test_list_filters_and_pagination():
