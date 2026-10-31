@@ -306,6 +306,200 @@ def test_invalid_feed_and_contact_settings_do_not_write():
     assert c.put("/api/admin/site", json=original).status_code == 401
 
 
+# ---------------------------------------------------------------- 文章可见性
+
+def _visibility_post(c, h, slug, visibility="public"):
+    result = c.post("/api/admin/posts", headers=h, json={"title": "可见性验证 " + slug,
+        "slug": slug, "contentMd": "# 私密正文\n\nvisibility-secret-body-" + slug,
+        "visibility": visibility, "category": "运维"})
+    assert result.status_code == 200, result.text
+    return result.json()["data"]["id"]
+
+
+def _publish_visibility_post(c, h, pid, mode="now", at=None):
+    r = c.post(f"/api/admin/posts/{pid}/publish", headers=h,
+               json={"mode": mode, "scheduledAt": at})
+    assert r.status_code == 200, r.text
+    task_id = r.json()["data"]["taskId"]
+    for _ in range(100):
+        task = c.get(f"/api/admin/tasks/{task_id}", headers=h).json()["data"]
+        if task["status"] != "running":
+            assert task["status"] == "done", task
+            return task
+        time.sleep(.01)
+    raise AssertionError("publish task timeout")
+
+
+def test_private_hides_all_visitor_surfaces_and_invalidates_cached_public_data():
+    c, h = client(), H(login())
+    slug = "visibility-every-surface"
+    pid = _visibility_post(c, h, slug)
+    _publish_visibility_post(c, h, pid)
+    c.put(f"/api/admin/posts/{pid}/draft", headers=h, json={"pinned": True, "tags": ["visibility-secret-tag"]})
+    comment_body = {"nick": "test", "content": "visibility-secret-comment"}
+    idem = {"Idempotency-Key": "visibility-comment-replay"}
+    comment = c.post(f"/api/posts/{slug}/comments", headers=idem, json=comment_body).json()["data"]
+    c.post(f"/api/admin/comments/{comment['id']}/approve", headers=h)
+    paths = ["/api/home", "/api/posts?pageSize=50", "/api/posts?sort=hot", "/api/posts?excludePinned=true",
+             "/api/posts?category=运维", "/api/posts?tag=visibility-secret-tag", "/api/archive",
+             "/api/search?q=visibility-every-surface", "/api/taxonomy", "/rss.xml", "/feed", "/sitemap.xml"]
+    for path in paths:
+        assert c.get(path).status_code == 200, path  # prime each cache before changing visibility
+    before = c.get(f"/api/posts/{slug}")
+    assert before.status_code == 200
+    c.get(f"/api/posts/{slug}/comments")
+    anchor_etag = c.get("/api/posts/http-cache-deep-dive").headers["etag"]
+    result = c.put(f"/api/admin/posts/{pid}/draft", headers=h, json={"visibility": "private"})
+    assert result.json()["data"]["visibility"] == "private"
+    private = c.get(f"/api/admin/posts/{pid}", headers=h).json()["data"]
+    assert private["visibility"] == "private" and private["status"] == "pinned"
+    assert slug in private["contentMd"] and private["previewUrl"] is None
+    assert c.get(f"/post/{slug}").status_code == 404
+    hidden_page = c.get(f"/post/{slug}").text
+    assert private["title"] not in hidden_page and "visibility-secret-body" not in hidden_page
+    assert c.get(f"/api/posts/{slug}", headers={"If-None-Match": before.headers["etag"]}).status_code == 404
+    assert c.get(f"/api/posts/{slug}", headers=h).status_code == 404
+    assert c.get(f"/api/posts/{slug}/comments").status_code == 404
+    assert c.post(f"/api/posts/{slug}/comments", headers=idem, json=comment_body).status_code == 404
+    assert c.post(f"/api/posts/{slug}/like").status_code == 404
+    for path in paths:
+        response = c.get(path)
+        assert response.status_code == 200, (path, response.text)
+        if path.startswith("/api/search?"):
+            assert response.json()["data"]["list"] == []
+        else:
+            assert slug not in response.text, path
+        assert "visibility-secret-comment" not in response.text, path
+        assert "visibility-secret-tag" not in response.text, path
+    anchor = c.get("/api/posts/http-cache-deep-dive", headers={"If-None-Match": anchor_etag})
+    assert anchor.status_code == 200 and slug not in anchor.text
+    assert c.get("/api/home").json()["data"]["stats"]["posts"] == c.get("/api/health").json()["data"]["posts"]
+    events = c.post("/api/events", json={"postId": pid, "slug": slug, "event": "view"})
+    assert events.status_code == 204
+    from app import db
+    assert db.q1("SELECT COUNT(*) AS c FROM analytics_events WHERE post_id=?", (pid,))["c"] == 0
+    c.put(f"/api/admin/posts/{pid}/draft", headers=h, json={"visibility": "public"})
+    assert c.get(f"/api/posts/{slug}").status_code == 200
+    assert slug in c.get("/api/home").text
+    assert slug in c.get("/rss.xml").text
+    assert slug in c.get("/sitemap.xml").text
+    c.delete(f"/api/admin/posts/{pid}", headers=h)
+
+
+def test_private_survives_publish_schedule_pin_and_restore():
+    c, h = client(), H(login())
+    pid = _visibility_post(c, h, "visibility-private-lifecycle", "private")
+    task = _publish_visibility_post(c, h, pid, "schedule", "2099-01-01T12:00")
+    assert task["doneUrl"] is None
+    post = c.get(f"/api/admin/posts/{pid}", headers=h).json()["data"]
+    assert post["status"] == "scheduled" and post["visibility"] == "private"
+    # Same publishing operation used by the scheduler must never reset visibility.
+    from app.services import publish_now
+    publish_now(pid)
+    task = _publish_visibility_post(c, h, pid)
+    assert task["doneUrl"] is None
+    c.put(f"/api/admin/posts/{pid}/draft", headers=h, json={"pinned": True, "contentMd": "更新后的私密内容"})
+    c.delete(f"/api/admin/posts/{pid}", headers=h)
+    c.post(f"/api/admin/posts/{pid}/restore", headers=h)
+    post = c.get(f"/api/admin/posts/{pid}", headers=h).json()["data"]
+    assert post["visibility"] == "private" and post["contentMd"] == "更新后的私密内容"
+    assert c.get("/api/posts/visibility-private-lifecycle").status_code == 404
+    c.delete(f"/api/admin/posts/{pid}", headers=h)
+
+
+def test_visibility_batch_filters_validation_and_auth():
+    c, h = client(), H(login())
+    ids = [_visibility_post(c, h, "visibility-batch-" + str(i)) for i in range(2)]
+    # All request validation happens before changing any selected article.
+    for value in ["hidden", True, None]:
+        r = c.post("/api/admin/posts/batch", headers=h, json={"ids": ids, "action": "setVisibility", "payload": {"visibility": value}})
+        assert r.status_code == 400
+        assert c.put(f"/api/admin/posts/{ids[0]}/draft", headers=h, json={"visibility": "hidden"}).status_code == 400
+    assert c.post("/api/admin/posts", headers=h, json={"visibility": "hidden"}).status_code == 400
+    assert c.get("/api/admin/posts?visibility=hidden", headers=h).status_code == 400
+    assert c.put(f"/api/admin/posts/{ids[0]}/draft", json={"visibility": "private"}).status_code == 401
+    result = c.post("/api/admin/posts/batch", headers=h,
+                    json={"ids": ids, "action": "setVisibility", "payload": {"visibility": "private"}}).json()
+    assert result["data"]["affected"] == 2
+    filtered = c.get("/api/admin/posts?q=visibility-batch&visibility=private", headers=h).json()["data"]
+    assert {p["id"] for p in filtered["list"]} == set(ids)
+    assert all(p["visibility"] == "private" and p["status"] == "draft" for p in filtered["list"])
+    assert c.get("/api/admin/posts?q=visibility-batch&visibility=public", headers=h).json()["data"]["total"] == 0
+    c.post("/api/admin/posts/batch", headers=h, json={"ids": ids, "action": "setVisibility", "payload": {"visibility": "public"}})
+    assert c.get("/api/admin/posts?q=visibility-batch&visibility=public", headers=h).json()["data"]["total"] == 2
+    c.post("/api/admin/posts/batch", headers=h, json={"ids": ids, "action": "trash"})
+
+
+def test_visibility_migration_preserves_legacy_rows_and_is_idempotent():
+    import sqlite3
+    from app import db
+    connection = sqlite3.connect(":memory:")
+    connection.executescript("""CREATE TABLE posts(id TEXT, slug TEXT, title TEXT, content_md TEXT, status TEXT);
+        CREATE TABLE categories(id TEXT, name TEXT, sort INTEGER);""")
+    legacy = [("legacy-"+status, "slug-"+status, "历史文章", "原始正文", status)
+              for status in ("draft", "published", "pinned", "scheduled", "trashed")]
+    connection.executemany("INSERT INTO posts VALUES(?,?,?,?,?)", legacy)
+    db._migrate(connection)
+    db._migrate(connection)
+    assert connection.execute("SELECT id,slug,title,content_md,status FROM posts").fetchall() == legacy
+    assert connection.execute("SELECT DISTINCT visibility FROM posts").fetchall() == [("public",)]
+    assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    connection.close()
+
+
+# ---------------------------------------------------------------- 合并回归：热力图与 Private / 草稿渲染
+
+def test_activity_counts_only_published_public_articles_and_their_versions():
+    from app import db
+    c, h = client(), H(login())
+    baseline = c.get("/api/home").json()["data"]["activity"]["total"]
+    private = _visibility_post(c, h, "activity-private-integration", "private")
+    draft = _visibility_post(c, h, "activity-draft-integration")
+    try:
+        for pid in (private, draft):
+            assert c.put(f"/api/admin/posts/{pid}/draft", headers=h,
+                         json={"contentMd": "新增的写作快照 " + pid}).status_code == 200
+        _publish_visibility_post(c, h, private)
+        assert c.get("/api/home").json()["data"]["activity"]["total"] == baseline
+        assert c.put(f"/api/admin/posts/{draft}/draft", headers=h, json={"visibility": "private"}).status_code == 200
+        assert c.put(f"/api/admin/posts/{draft}/draft", headers=h, json={"visibility": "public"}).status_code == 200
+        assert c.get("/api/home").json()["data"]["activity"]["total"] == baseline
+        c.put(f"/api/admin/posts/{private}/draft", headers=h, json={"visibility": "public"})
+        versions = db.q1("SELECT COUNT(*) AS c FROM post_versions WHERE post_id=?", (private,))["c"]
+        expected = baseline + 1 + versions
+        assert c.get("/api/home").json()["data"]["activity"]["total"] == expected
+        c.put(f"/api/admin/posts/{private}/draft", headers=h, json={"visibility": "private"})
+        assert c.get("/api/home").json()["data"]["activity"]["total"] == baseline
+        _publish_visibility_post(c, h, draft)
+        public_versions = db.q1("SELECT COUNT(*) AS c FROM post_versions WHERE post_id=?", (draft,))["c"]
+        assert c.get("/api/home").json()["data"]["activity"]["total"] == baseline + 1 + public_versions
+        c.delete(f"/api/admin/posts/{draft}", headers=h)
+        assert c.get("/api/home").json()["data"]["activity"]["total"] == baseline
+    finally:
+        for pid in (private, draft): c.delete(f"/api/admin/posts/{pid}", headers=h)
+
+
+def test_lazy_draft_rendering_preserves_source_and_private_publish():
+    from app import db
+    c, h = client(), H(login())
+    pid = _visibility_post(c, h, "lazy-render-private-integration", "private")
+    try:
+        original = db.q1("SELECT content_html FROM posts WHERE id=?", (pid,))["content_html"]
+        md = "# 新标题\n\n**新的私密正文**"
+        response = c.put(f"/api/admin/posts/{pid}/draft", headers=h, json={"contentMd": md})
+        assert response.status_code == 200
+        row = db.q1("SELECT content_md,content_html,render_ver,visibility FROM posts WHERE id=?", (pid,))
+        assert row["content_md"] == md and row["content_html"] == original and row["render_ver"] == 0
+        assert row["visibility"] == "private"
+        _publish_visibility_post(c, h, pid)
+        row = db.q1("SELECT content_md,content_html,render_ver,visibility FROM posts WHERE id=?", (pid,))
+        assert row["content_md"] == md and "<strong>新的私密正文</strong>" in row["content_html"]
+        assert row["render_ver"] == db.RENDER_VERSION and row["visibility"] == "private"
+        assert c.get("/api/posts/lazy-render-private-integration").status_code == 404
+    finally:
+        c.delete(f"/api/admin/posts/{pid}", headers=h)
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_") and callable(f)]
     failed = 0

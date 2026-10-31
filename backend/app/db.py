@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS post_likes(
 
 # 增量迁移：(表, 列, 定义)。对已有线上库执行 ALTER TABLE，幂等。
 MIGRATIONS = [
+    ("posts", "visibility", "TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public','private'))"),
     ("posts", "content_html", "TEXT NOT NULL DEFAULT ''"),
     ("posts", "toc", "TEXT NOT NULL DEFAULT '[]'"),
     ("posts", "word_count", "INTEGER NOT NULL DEFAULT 0"),

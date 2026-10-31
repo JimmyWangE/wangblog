@@ -107,6 +107,14 @@ cd backend && .venv/bin/python -m uvicorn app.main:app --port 8310
 
 ## 配置
 
+### 文章可见性（Public / Private）
+
+写文章时可在顶部可见性按钮或「文章设置 → 文章可见性」选择 Public（公开）或 Private（私密/隐身）。文章管理表格也可逐篇切换、按可见性筛选，或选择多篇后批量设置。
+
+可见性独立于发布状态：只有 **已发布/置顶且 Public** 的文章对访客开放；Private 即使发布、定时发布、置顶或从回收站恢复，也仅能由管理员在后台查看和预览。Private 不进入首页、文章列表、归档、搜索、相关推荐、RSS 或 Sitemap，详情、评论和点赞接口均返回 404。设置更改后立即清理服务端缓存，前台访问文章时重新核验权限。
+
+升级时自动为旧文章增加 `visibility` 字段，默认 `public`，保留已有内容及发布状态。创建和保存接口接受 `visibility: "public" | "private"`；批量接口使用 `action: "setVisibility", payload: {visibility: "private"}`。
+
 后台侧栏的 **RSS 与首页** 打开统一设置表单（`/admin/rss`）。在这里可修改站点名称与描述、首页标题与简介、作者资料、GitHub 地址及邮箱，以及 RSS 的语言、文章数量和全文/摘要模式。保存后刷新首页即可看到文案和图标链接变化，`/rss.xml` 与 `/feed` 同步更新。留空 GitHub 或邮箱可隐藏对应图标。
 
 RSS 标题与简介沿用站点名称和描述；GitHub 使用 Atom related link，邮箱使用 RSS managingEditor，首页文案以 `urn:wangblog:site` 命名空间扩展输出。订阅文章来自已发布文章。所有配置统一保存在现有站点设置中，无需手工维护 XML 文件。
@@ -123,6 +131,10 @@ RSS 标题与简介沿用站点名称和描述；GitHub 使用 Atom related link
 | `WB_SERVE_WEB` / `WB_WEB_DIR` | `true` / `../web` | 后端是否托管前端 |
 | `WB_COMMENT_AUTO_APPROVE` | `false` | 未触发风控的评论免审 |
 | `WB_CORS_ORIGINS` | 空（仅同源） | 逗号分隔的跨域白名单 |
+
+### 合并后的写作足迹与私密文章
+
+首页热力图仅统计已发布且 Public 的文章及其写作版本；Private、草稿、定时和回收站文章不计入。切换可见性后会刷新首页统计。编辑器保留输入节流、标题快捷键和延迟本地备份，恢复未同步新文章时仍保留 Private 设置。
 
 ## 测试
 

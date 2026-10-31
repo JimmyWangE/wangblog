@@ -123,7 +123,7 @@ def publish_now(post_id: str, scheduled_at: str | None = None, mode: str = "now"
         db.exec_("INSERT INTO post_versions(post_id,content_md,version_no,created_at) VALUES(?,?,?,?)",
                  (post_id, post["content_md"], ver + 1, ts))
     cache.invalidate("post:", "taxonomy", "dashboard", "home", "feed", "archive", "search:", "posts:")
-    return db.q1("SELECT slug, status FROM posts WHERE id=?", (post_id,))
+    return db.q1("SELECT slug, status, visibility FROM posts WHERE id=?", (post_id,))
 
 
 async def _run_publish(task_id: str):
@@ -142,7 +142,8 @@ async def _run_publish(task_id: str):
                 result = publish_now(task["postId"], task["scheduledAt"], task["mode"])
             step["status"] = "done"
         task["status"] = "done"
-        task["doneUrl"] = f"/post/{result['slug']}" if result else None
+        task["doneUrl"] = (f"/post/{result['slug']}" if result and result["visibility"] == "public"
+                           and result["status"] in ("published", "pinned") else None)
     except Exception as e:  # noqa: BLE001
         task["status"], task["error"] = "failed", str(e)
         for step in task["steps"]:

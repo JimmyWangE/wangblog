@@ -4,6 +4,7 @@ import re
 import shutil
 import uuid
 from datetime import datetime, timedelta
+from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Request, UploadFile
@@ -66,6 +67,7 @@ def _category_id(name: str | None) -> str | None:
 def _admin_item(r: dict, tags: list[str]) -> dict:
     return {
         "id": r["id"], "slug": r["slug"], "title": r["title"], "status": r["status"],
+        "visibility": r["visibility"],
         "category": r.get("category_name") or "", "tags": tags, "excerpt": r.get("excerpt") or "",
         "commentCount": r["comment_count"], "views": r["view_count"], "likes": r.get("like_count", 0),
         "words": r.get("word_count", 0), "updatedAt": (r["updated_at"] or "")[:16],
@@ -77,7 +79,7 @@ def _admin_item(r: dict, tags: list[str]) -> dict:
 
 @router.get("/posts")
 def admin_posts(q: str = "", status: str = "", category: str = "", tag: str = "", page: int = 1, pageSize: int = 20,
-                sort: str = "updated"):
+                sort: str = "updated", visibility: Literal["", "public", "private"] = ""):
     page, size = paginate(page, pageSize)
     where, args = [], []
     if status == "trashed":
@@ -95,6 +97,9 @@ def admin_posts(q: str = "", status: str = "", category: str = "", tag: str = ""
     if q:
         where.append("(p.title LIKE ? OR p.slug LIKE ? OR p.content_md LIKE ?)")
         args += [f"%{q}%"] * 3
+    if visibility:
+        where.append("p.visibility = ?")
+        args.append(visibility)
     if category:
         where.append("c.name = ?")
         args.append(category)
@@ -122,6 +127,7 @@ class PostCreateIn(BaseModel):
     slug: str | None = None
     category: str | None = None
     contentMd: str = ""
+    visibility: Literal["public", "private"] = "public"
 
 
 @router.post("/posts")
@@ -133,12 +139,12 @@ def create_post(body: PostCreateIn, user: dict = Depends(current_user)):
     if db.q1("SELECT id FROM posts WHERE slug=?", (slug,)):
         raise_err(ERR_SLUG_CONFLICT, "Slug 已存在，全站唯一", {"slug": slug})
     pid, ts = db.uid(), db.now()
-    db.exec_("""INSERT INTO posts(id,slug,title,content_md,status,category_id,created_at,updated_at)
-                VALUES(?,?,?,?,'draft',?,?,?)""", (pid, slug, title, body.contentMd, _category_id(body.category), ts, ts))
+    db.exec_("""INSERT INTO posts(id,slug,title,content_md,status,category_id,created_at,updated_at,visibility)
+                VALUES(?,?,?,?,'draft',?,?,?,?)""", (pid, slug, title, body.contentMd, _category_id(body.category), ts, ts, body.visibility))
     if body.contentMd:
         db.rerender_post(pid)
     _audit(user, "post.create", f"{title} ({slug})")
-    return ok({"id": pid, "slug": slug, "status": "draft"})
+    return ok({"id": pid, "slug": slug, "status": "draft", "visibility": body.visibility})
 
 
 @router.get("/posts/{post_id}")
@@ -147,7 +153,7 @@ def admin_post_detail(post_id: str):
     tags = post_tags_map([r["id"]]).get(r["id"], [])
     versions = db.q1("SELECT COUNT(*) AS c FROM post_versions WHERE post_id=?", (post_id,))["c"]
     return ok({**_admin_item(r, tags), "contentMd": r.get("content_md") or "", "versionCount": versions,
-               "previewUrl": f"/post/{r['slug']}" if r["status"] in ("published", "pinned") else None})
+               "previewUrl": f"/post/{r['slug']}" if r["status"] in ("published", "pinned") and r["visibility"] == "public" else None})
 
 
 class DraftIn(BaseModel):
@@ -160,6 +166,7 @@ class DraftIn(BaseModel):
     cover: dict | None = None
     clearCover: bool = False
     pinned: bool | None = None
+    visibility: Literal["public", "private"] | None = None
     baseUpdatedAt: str | None = None  # 乐观锁：编辑器打开时的 updatedAt，防多窗口覆盖
 
 
@@ -173,6 +180,9 @@ def save_draft(post_id: str, body: DraftIn, user: dict = Depends(current_user)):
     if body.title is not None:
         updates.append("title=?")
         args.append(body.title.strip() or r["title"])
+    if body.visibility is not None:
+        updates.append("visibility=?")
+        args.append(body.visibility)
     if body.contentMd is not None:
         updates.append("content_md=?")
         args.append(body.contentMd)
@@ -224,11 +234,13 @@ def save_draft(post_id: str, body: DraftIn, user: dict = Depends(current_user)):
     elif body.excerpt is not None and not body.excerpt.strip():
         db.exec_("UPDATE posts SET excerpt=? WHERE id=?", (make_excerpt(r["content_md"] or ""), post_id))
 
-    if r["status"] in ("published", "pinned"):
+    if r["status"] in ("published", "pinned") or body.visibility is not None:
         cache.invalidate(*ALL_CACHE)
-    row = db.q1("SELECT slug, word_count, reading_minutes, updated_at FROM posts WHERE id=?", (post_id,))
+    if body.visibility is not None and body.visibility != r["visibility"]:
+        _audit(user, "post.visibility", f"{r['slug']} -> {body.visibility}")
+    row = db.q1("SELECT slug, word_count, reading_minutes, updated_at, visibility FROM posts WHERE id=?", (post_id,))
     return ok({"id": post_id, "savedAt": ts, "slug": row["slug"], "words": row["word_count"],
-               "readingMinutes": row["reading_minutes"], "updatedAt": row["updated_at"]})
+               "readingMinutes": row["reading_minutes"], "updatedAt": row["updated_at"], "visibility": row["visibility"]})
 
 
 class PublishIn(BaseModel):
@@ -310,16 +322,18 @@ def trash_post(post_id: str, purge: bool = False, user: dict = Depends(current_u
 
 class BatchIn(BaseModel):
     ids: list[str]
-    action: str                 # setCategory | addTags | publish | trash | restore | unpublish
+    action: str                 # setCategory | addTags | publish | trash | restore | unpublish | setVisibility
     payload: dict = {}
 
 
 @router.post("/posts/batch")
 def batch_posts(body: BatchIn, user: dict = Depends(current_user)):
-    if body.action not in ("setCategory", "addTags", "publish", "trash", "restore", "unpublish"):
+    if body.action not in ("setCategory", "addTags", "publish", "trash", "restore", "unpublish", "setVisibility"):
         raise_err(ERR_PARAM, "不支持的批量操作", {"field": "action"})
     if not body.ids:
         raise_err(ERR_PARAM, "未选择文章", {"field": "ids"})
+    if body.action == "setVisibility" and body.payload.get("visibility") not in ("public", "private"):
+        raise_err(ERR_PARAM, "可见性只能为 public 或 private", {"field": "visibility"})
     affected, task_ids = 0, []
     for pid in body.ids[:200]:
         r = db.q1("SELECT * FROM posts WHERE id=?", (pid,))
@@ -341,6 +355,8 @@ def batch_posts(body: BatchIn, user: dict = Depends(current_user)):
             _set_tags(pid, existing + list(body.payload.get("tags", [])))
         elif body.action == "publish":
             task_ids.append(create_publish_task(pid, "now", None))
+        elif body.action == "setVisibility":
+            db.exec_("UPDATE posts SET visibility=?, updated_at=? WHERE id=?", (body.payload["visibility"], ts, pid))
         affected += 1
     cache.invalidate(*ALL_CACHE)
     _audit(user, "post.batch", f"{body.action} ×{affected}")

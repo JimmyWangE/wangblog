@@ -34,7 +34,7 @@ export async function editorView(root, ctx) {
   const isNew = ctx.params.id === "new";
   const S = {
     id: isNew ? null : ctx.params.id, post: null, dirty: false, saving: false, lastSaved: null, baseUpdatedAt: null,
-    meta: { slug: "", category: "", tags: [], excerpt: "", cover: null, pinned: false }, panel: null, vditor: null, tax: null,
+    meta: { slug: "", category: "", tags: [], excerpt: "", cover: null, pinned: false, visibility: "public" }, panel: null, vditor: null, tax: null,
   };
 
   mount(root, html`<div class="editor-page"><div style="display:grid;place-items:center;height:100vh"><span class="spinner" style="width:28px;height:28px;color:var(--accent)"></span></div></div>`);
@@ -55,7 +55,7 @@ export async function editorView(root, ctx) {
     const p = S.post;
     content = p.contentMd;
     S.baseUpdatedAt = p.rev;
-    Object.assign(S.meta, { slug: p.slug, category: p.category, tags: [...p.tags], excerpt: p.excerpt, cover: p.cover, pinned: p.status === "pinned" });
+    Object.assign(S.meta, { slug: p.slug, category: p.category, tags: [...p.tags], excerpt: p.excerpt, cover: p.cover, pinned: p.status === "pinned", visibility: p.visibility || "public" });
     // 本地灾备比服务器新：提示恢复
     const bk = readBackup(S.id);
     if (bk && bk.content !== content && bk.t > Date.parse(p.rev.replace(" ", "T")) + 2000) {
@@ -69,7 +69,8 @@ export async function editorView(root, ctx) {
     const bk = readBackup("new");
     if (bk?.content) setTimeout(async () => {
       if (await confirmDialog({ title: "恢复上次未保存的新文章？", message: "检测到上次新建文章时留下的本地内容。", okText: "恢复" })) {
-        S.vditor.setValue(bk.content); titleEl.value = bk.title || ""; autoGrow(); markDirty(null);
+        S.meta.visibility = bk.visibility === "private" ? "private" : "public";
+        S.vditor.setValue(bk.content); titleEl.value = bk.title || ""; autoGrow(); markDirty(null); paintMetaLine();
       } else dropBackup("new");
     }, 400);
   }
@@ -89,6 +90,7 @@ export async function editorView(root, ctx) {
       <button class="icon-btn ed-hide-sm" data-theme-toggle title="切换主题">${icon("moon")}</button>
       <button class="icon-btn ed-hide-sm" data-panel="history" title="历史版本">${icon("history")}</button>
       <button class="icon-btn" data-panel="meta" title="文章设置">${icon("settings")}</button>
+      <button class="btn btn--sm" data-panel="meta" data-visibility-badge title="设置文章是否对访客可见"></button>
       <button class="btn btn--sm ed-hide-sm" data-preview>${icon("eye")}预览</button>
       <button class="btn btn--sm btn--primary" data-publish>${icon("send")}${S.post && ["published", "pinned"].includes(S.post.status) ? "更新" : "发布"}</button>
     </header>
@@ -171,7 +173,7 @@ export async function editorView(root, ctx) {
 
   const setSave = (cls, text) => { saveStateEl.className = "save-state " + cls; saveStateEl.textContent = text; };
   // 本地灾备：同步写 localStorage 较重，停笔后再写
-  const backupLater = debounce(() => writeBackup(S.id || "new", { title: titleEl.value, content: curMd() }), 600);
+  const backupLater = debounce(() => writeBackup(S.id || "new", { title: titleEl.value, content: curMd(), visibility: S.meta.visibility }), 600);
   /** md：Vditor 传入的最新正文；null 表示正文被程序改写（需重新读取）；省略则正文未变（如只改了标题） */
   function markDirty(md) {
     if (md !== undefined) lastMd = md;
@@ -184,7 +186,7 @@ export async function editorView(root, ctx) {
   const autoSave = debounce(() => save(), 1200);
 
   /* ---------------- 保存 ---------------- */
-  let savePromise = null;
+  let savePromise = null, visibilityPromise = null;
   async function save({ silent = true, force = false } = {}) {
     if (savePromise) { await savePromise; if (!S.dirty && !force) return true; }
     if (!S.dirty && !force && S.id) return true;
@@ -195,7 +197,7 @@ export async function editorView(root, ctx) {
       setSave("is-saving", "保存中…");
       try {
         if (!S.id) {
-          const created = await admin.createPost({ title: title || "无标题文章", category: S.meta.category || null });
+          const created = await admin.createPost({ title: title || "无标题文章", category: S.meta.category || null, visibility: S.meta.visibility });
           S.id = created.id; S.meta.slug = created.slug;
           history.replaceState(null, "", `/admin/editor/${S.id}`);
           dropBackup("new");
@@ -206,7 +208,7 @@ export async function editorView(root, ctx) {
         S.meta.slug = r.slug;
         S.lastSaved = new Date();
         setSave(S.dirty ? "is-dirty" : "is-saved", S.dirty ? "未保存" : `已保存 ${String(S.lastSaved.getHours()).padStart(2, "0")}:${String(S.lastSaved.getMinutes()).padStart(2, "0")}`);
-        if (!S.dirty) dropBackup(S.id);
+        if (!S.dirty) { backupLater.cancel(); dropBackup(S.id); }
         $("[data-crumb]", root).textContent = title || "新文章";
         if (!silent) toast("已保存", "success", 1400);
         if (S.dirty) autoSave();
@@ -343,6 +345,7 @@ export async function editorView(root, ctx) {
 
   function paintMetaLine() {
     const m = S.meta;
+    mount($("[data-visibility-badge]", root), html`${icon(m.visibility === "private" ? "shield" : "eye")}${m.visibility === "private" ? "Private · 私密" : "Public · 公开"}`);
     mount($("[data-meta-line]", root), html`
       <button class="chip ${m.category ? "" : "add"}" data-panel="meta">${icon("folder")}${m.category || "选择分类"}</button>
       ${m.tags.map((t) => html`<button class="chip" data-panel="meta">#${t}</button>`)}
@@ -366,6 +369,10 @@ export async function editorView(root, ctx) {
     const [ga, gb] = c.from ? [c.from, c.to] : hashGradient(m.slug || "x");
     const allTags = (S.tax?.tags || []).map((t) => t.name).filter((t) => !m.tags.includes(t)).slice(0, 14);
     mount(box, html`<h3>文章设置<button class="icon-btn" data-panel="meta" title="关闭">${icon("x")}</button></h3>
+      <label class="field"><span class="field__label">文章可见性</span><select class="select" data-visibility aria-label="文章可见性">
+        <option value="public" ${m.visibility !== "private" ? "selected" : ""}>Public · 公开</option>
+        <option value="private" ${m.visibility === "private" ? "selected" : ""}>Private · 私密</option></select>
+        <span class="field__hint">Private 为隐身文章，仅管理员可查看；发布或定时发布后仍不会对访客开放。</span></label>
       <label class="field"><span class="field__label">URL 别名（slug）</span><input class="input mono" data-m="slug" value="${m.slug}" placeholder="my-post-title">
         <span class="field__hint">仅小写字母、数字和连字符，访问地址：/post/${m.slug || "…"}</span></label>
       <label class="field"><span class="field__label">分类</span><input class="input" data-m="category" list="cat-list" value="${m.category}" placeholder="选择或输入新分类">
@@ -383,7 +390,7 @@ export async function editorView(root, ctx) {
       ${S.post && ["published", "pinned"].includes(S.post.status) ? html`<label class="field" style="display:flex;align-items:center;justify-content:space-between;margin-top:18px">
         <span class="field__label">在首页置顶</span><span class="switch"><input type="checkbox" data-pin ${m.pinned ? "checked" : ""}><span></span></span></label>` : ""}
       <div style="margin-top:22px;display:grid;gap:8px">
-        ${S.post && ["published", "pinned"].includes(S.post.status) ? html`<a class="btn btn--block" href="${urlFor.post(m.slug)}" target="_blank" data-native>${icon("external")}查看线上文章</a>` : ""}
+        ${S.post && ["published", "pinned"].includes(S.post.status) && m.visibility !== "private" ? html`<a class="btn btn--block" href="${urlFor.post(m.slug)}" target="_blank" data-native>${icon("external")}查看线上文章</a>` : ""}
         <button class="btn btn--block btn--ghost" data-export>${icon("save")}导出 Markdown</button>
       </div>`);
   }
@@ -427,6 +434,7 @@ export async function editorView(root, ctx) {
 
   /* ---------------- 发布 ---------------- */
   async function publish() {
+    if (visibilityPromise) await visibilityPromise;
     if (!titleEl.value.trim()) { toast("请先填写标题", "warning"); titleEl.focus(); return; }
     if (!vd.getValue().trim()) { toast("正文还是空的", "warning"); return; }
     const ok = await save({ force: true });
@@ -439,8 +447,8 @@ export async function editorView(root, ctx) {
       body: html`<div data-pub-form>
         ${!S.meta.category || !S.meta.tags.length ? html`<div class="alert alert--warn" style="margin-bottom:14px">${icon("bulb")}<span>建议先在「文章设置」中补充${!S.meta.category ? "分类" : ""}${!S.meta.category && !S.meta.tags.length ? "和" : ""}${!S.meta.tags.length ? "标签" : ""}，便于读者检索。</span></div>` : ""}
         <div class="radio-cards">
-          <label class="radio-card"><input type="radio" name="mode" value="now" checked><span><b>立即${live ? "更新" : "发布"}</b><small>马上对读者可见</small></span></label>
-          <label class="radio-card"><input type="radio" name="mode" value="schedule" ${live ? "disabled" : ""}><span><b>定时发布</b><small>到点自动上线</small></span></label>
+          <label class="radio-card"><input type="radio" name="mode" value="now" checked><span><b>立即${live ? "更新" : "发布"}</b><small>${S.meta.visibility === "private" ? "Private · 仅管理员可见" : "马上对读者可见"}</small></span></label>
+          <label class="radio-card"><input type="radio" name="mode" value="schedule" ${live ? "disabled" : ""}><span><b>定时发布</b><small>${S.meta.visibility === "private" ? "到点发布，保持 Private" : "到点自动上线"}</small></span></label>
         </div>
         <label class="field" style="margin-top:14px" data-sched hidden><span class="field__label">发布时间</span><input class="input" type="datetime-local" value="${local}" data-at></label>
       </div><div class="pub-steps" data-steps hidden></div>`,
@@ -473,9 +481,9 @@ export async function editorView(root, ctx) {
           invalidate("/api/");
           mount($(".modal__body", m.el), html`<div class="pub-done"><div class="big">${icon("check")}</div>
             <h3>${mode === "schedule" ? "已加入定时发布" : live ? "更新成功" : "发布成功 🎉"}</h3>
-            <p class="faint" style="margin-top:6px">${mode === "schedule" ? `将于 ${at.replace("T", " ")} 自动上线` : "读者现在可以看到这篇文章了"}</p></div>`);
+            <p class="faint" style="margin-top:6px">${S.post.visibility === "private" ? "Private · 仅管理员可见，访客无法查看" : mode === "schedule" ? `将于 ${at.replace("T", " ")} 自动上线` : "读者现在可以看到这篇文章了"}</p></div>`);
           mount($(".modal__foot", m.el), html`<button class="btn" data-close>继续编辑</button>
-            ${mode === "now" ? html`<a class="btn btn--primary" href="${urlFor.post(S.post.slug)}" target="_blank" data-native>${icon("external")}查看文章</a>` : ""}`);
+            ${mode === "now" && S.post.visibility !== "private" ? html`<a class="btn btn--primary" href="${urlFor.post(S.post.slug)}" target="_blank" data-native>${icon("external")}查看文章</a>` : ""}`);
         } else toast(task.error || "发布失败", "error");
       } catch (err) { toast(err.message, "error"); btn.classList.remove("is-loading"); }
     });
@@ -521,6 +529,34 @@ export async function editorView(root, ctx) {
 
   root.addEventListener("change", async (e) => {
     const t = e.target;
+    if (t.matches("[data-visibility]")) {
+      if (visibilityPromise) { t.value = S.meta.visibility; return; }
+      const previous = S.meta.visibility, next = t.value;
+      t.disabled = true;
+      visibilityPromise = (async () => {
+        try {
+          if (savePromise) await savePromise;
+          S.meta.visibility = next;
+          if (!S.id && !(await save({ force: true }))) throw new Error("保存失败，请重试");
+          if (S.id) {
+            const result = await admin.saveDraft(S.id, { visibility: next });
+            S.baseUpdatedAt = result.updatedAt;
+            S.meta.visibility = result.visibility;
+          }
+          if (S.dirty) backupLater();
+          invalidate("/api/");
+          toast(next === "private" ? "已设为 Private，访客无法查看" : "已设为 Public，发布后对访客可见", "success");
+        } catch (err) { S.meta.visibility = previous; toast(err.message, "error"); }
+        finally {
+          t.disabled = false;
+          paintMetaLine();
+          if (S.panel === "meta") paintMetaPanel($("[data-panel-box]", root));
+        }
+      })();
+      await visibilityPromise;
+      visibilityPromise = null;
+      return;
+    }
     if (t.matches("[data-m]")) {
       const k = t.dataset.m;
       const v = t.value.trim();
@@ -599,6 +635,7 @@ export async function editorView(root, ctx) {
   return () => {
     if (S.dirty) { backupLater.flush(); save(); }
     autoSave.cancel?.();
+    backupLater.cancel();
     scheduleStats.cancel();
     document.removeEventListener("keydown", onKey);
     document.removeEventListener("keydown", onHeadingKey, true);

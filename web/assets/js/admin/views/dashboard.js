@@ -4,6 +4,7 @@ import { countUp } from "../../lib/ui.js";
 import { $, $$, html, mount, icon, fmtNum, esc } from "../../lib/util.js";
 
 const ACTION_LABEL = { "post.create": "新建文章", "post.publish": "发布文章", "post.trash": "移入回收站", "post.restore": "恢复文章",
+  "post.visibility": "修改文章可见性",
   "post.unpublish": "撤回发布", "post.batch": "批量操作", "post.purge": "彻底删除", upload: "上传图片", "comment.approve": "通过评论",
   "comment.spam": "标记垃圾评论", "comment.delete": "删除评论", "comment.reply": "回复评论", "site.update": "修改站点设置",
   "login.success": "登录成功", "login.password": "密码验证通过", "category.create": "新建分类", "category.update": "修改分类",

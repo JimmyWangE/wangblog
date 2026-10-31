@@ -108,15 +108,16 @@ const enc = encodeURIComponent;
 /* ---- 前台 ---- */
 export const api = {
   site: () => cachedGet("/api/site/config", { ttl: 300_000 }),
-  home: () => cachedGet("/api/home"),
-  posts: (o) => cachedGet("/api/posts" + qs(o)),
-  post: (slug) => cachedGet(`/api/posts/${enc(slug)}`),
-  comments: (slug, force) => cachedGet(`/api/posts/${enc(slug)}/comments`, { force }),
+  // 每次访问重新检查公开权限，不以浏览器内存中的旧文章绕过 Private 设置。
+  home: () => request("/api/home"),
+  posts: (o) => request("/api/posts" + qs(o)),
+  post: (slug) => request(`/api/posts/${enc(slug)}`),
+  comments: (slug) => request(`/api/posts/${enc(slug)}/comments`),
   submitComment: (slug, body) => request(`/api/posts/${enc(slug)}/comments`, { method: "POST", body,
     headers: { "Idempotency-Key": "c-" + Date.now() + "-" + Math.random().toString(36).slice(2) } }),
   like: (slug) => request(`/api/posts/${enc(slug)}/like`, { method: "POST" }),
-  taxonomy: () => cachedGet("/api/taxonomy"),
-  archive: (o) => cachedGet("/api/archive" + qs(o)),
+  taxonomy: () => request("/api/taxonomy"),
+  archive: (o) => request("/api/archive" + qs(o)),
   search: (q, o = {}, signal) => request("/api/search" + qs({ q, ...o }), { signal }),
   track: (body) => {
     const data = JSON.stringify(body);

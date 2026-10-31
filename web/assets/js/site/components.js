@@ -152,6 +152,6 @@ export function activityGraph(act) {
         <div class="activity__cells" role="img" aria-label="过去一年共 ${act.total} 次写作">${raw(cells)}</div>
       </div>
     </div>
-    <div class="activity__legend"><span>发布文章与写作快照（每 10 分钟一次）计入</span><span class="grow"></span>少<i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i>多</div>
+    <div class="activity__legend"><span>仅已发布且公开文章及其写作快照计入</span><span class="grow"></span>少<i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i>多</div>
   </section>`;
 }

@@ -31,7 +31,7 @@ from .services import (LIST_TTL, POST_TTL, SEARCH_TTL, TAXONOMY_TTL, cache, dete
 router = APIRouter(prefix="/api", tags=["前台"])
 
 PUB = ("published", "pinned")
-PUB_SQL = "p.status IN ('published','pinned')"
+PUB_SQL = "p.status IN ('published','pinned') AND p.visibility = 'public'"
 CARD_SELECT = """SELECT p.id,p.slug,p.title,p.excerpt,p.status,p.cover,p.reading_minutes,p.word_count,p.comment_count,
                  p.view_count,p.like_count,p.published_at,p.scheduled_at,p.created_at,c.name AS category_name
                  FROM posts p LEFT JOIN categories c ON c.id=p.category_id"""
@@ -64,7 +64,8 @@ def site_stats() -> dict:
     s = db.q1(f"""SELECT COUNT(*) AS posts, COALESCE(SUM(word_count),0) AS words,
                   COALESCE(SUM(view_count),0) AS views, COALESCE(SUM(like_count),0) AS likes
                   FROM posts p WHERE {PUB_SQL}""")
-    comments = db.q1("SELECT COUNT(*) AS c FROM comments WHERE status='approved'")["c"]
+    comments = db.q1(f"""SELECT COUNT(*) AS c FROM comments cm JOIN posts p ON p.id=cm.post_id
+                          WHERE cm.status='approved' AND {PUB_SQL}""")["c"]
     cfg = site_config_data().get("site", {})
     try:
         start = datetime.strptime(cfg.get("startDate", ""), "%Y-%m-%d")
@@ -111,14 +112,15 @@ ACTIVITY_DAYS = 371  # 53 周
 
 
 def activity_data() -> dict:
-    """近一年每日写作次数（GitHub 贡献图）：已发布文章的发布日 + 自动保存产生的版本快照。只输出计数。"""
+    """近一年每日写作次数（GitHub 贡献图）：已发布且公开文章的发布日 + 其版本快照；私密、草稿和回收站均不计入。"""
     today = datetime.now().date()
     since = (today - timedelta(days=ACTIVITY_DAYS - 1)).strftime("%Y-%m-%d")
     rows = db.q(f"""SELECT substr(published_at,1,10) AS d, COUNT(*) AS c FROM posts p
                     WHERE {PUB_SQL} AND published_at >= ? GROUP BY d
                     UNION ALL
-                    SELECT substr(created_at,1,10) AS d, COUNT(*) AS c FROM post_versions
-                    WHERE created_at >= ? GROUP BY d""", (since, since))
+                    SELECT substr(v.created_at,1,10) AS d, COUNT(*) AS c FROM post_versions v
+                    JOIN posts p ON p.id=v.post_id
+                    WHERE {PUB_SQL} AND v.created_at >= ? GROUP BY d""", (since, since))
     counts: dict[str, int] = {}
     for r in rows:
         counts[r["d"]] = counts.get(r["d"], 0) + r["c"]
@@ -139,11 +141,11 @@ def home():
     cached = cache.get("home")
     if cached:
         return ok(cached)
-    featured = db.q(f"{CARD_SELECT} WHERE p.status='pinned' ORDER BY p.published_at DESC LIMIT 3")
+    featured = db.q(f"{CARD_SELECT} WHERE {PUB_SQL} AND p.status='pinned' ORDER BY p.published_at DESC LIMIT 3")
     hot = db.q(f"{CARD_SELECT} WHERE {PUB_SQL} ORDER BY p.view_count DESC LIMIT 5")
-    recent_comments = db.q("""SELECT cm.author_name, cm.content, cm.created_at, cm.is_author, p.slug, p.title
+    recent_comments = db.q(f"""SELECT cm.author_name, cm.content, cm.created_at, cm.is_author, p.slug, p.title
                               FROM comments cm JOIN posts p ON p.id=cm.post_id
-                              WHERE cm.status='approved' AND p.status IN ('published','pinned')
+                              WHERE cm.status='approved' AND {PUB_SQL}
                               ORDER BY cm.created_at DESC LIMIT 5""")
     tax = taxonomy_data()
     data = {
@@ -203,7 +205,9 @@ def post_detail(slug: str, request: Request, response: Response):
     row = get_public_post(slug)
     if not row:
         raise_err(ERR_NOT_FOUND, "文章不存在")
-    etag = make_etag(row["slug"], row["updated_at"], row["comment_count"], row["like_count"], row["render_ver"])
+    # 相关推荐和上下篇也受权限影响，避免其他文章改为 Private 后仍返回旧的 304。
+    public_ids = ",".join(p["id"] for p in db.q(f"SELECT id FROM posts p WHERE {PUB_SQL} ORDER BY id"))
+    etag = make_etag(row["slug"], row["updated_at"], row["comment_count"], row["like_count"], row["render_ver"], public_ids)
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers={"ETag": etag})
     response.headers["ETag"] = etag
@@ -289,12 +293,12 @@ class CommentIn(BaseModel):
 
 @router.post("/posts/{slug}/comments")
 async def submit_comment(slug: str, body: CommentIn, request: Request):
-    idem = check_idempotency(request.headers.get("idempotency-key"))
-    if idem is not None:
-        return ok(idem)
     post = get_public_post(slug)
     if not post:
         raise_err(ERR_NOT_FOUND, "文章不存在")
+    idem = check_idempotency(request.headers.get("idempotency-key"))
+    if idem is not None:
+        return ok(idem)
     content = (body.content or "").strip()
     nick = (body.nick or "").strip()[:32] or "访客"
     if not content:
@@ -453,8 +457,12 @@ async def track_event(body: EventIn, request: Request):
         return Response(status_code=204)
     post_id = body.postId
     if body.slug:
-        p = db.q1("SELECT id FROM posts WHERE slug=?", (body.slug,))
-        post_id = p and p["id"]
+        p = get_public_post(body.slug)
+        if not p:
+            return Response(status_code=204)
+        post_id = p["id"]
+    elif post_id and not db.q1(f"SELECT id FROM posts p WHERE p.id=? AND {PUB_SQL}", (post_id,)):
+        return Response(status_code=204)
     uv = body.uvHash[:64] or hashlib.sha256(f"{ip}|{db.today()}".encode()).hexdigest()[:32]
     db.exec_("INSERT INTO analytics_events(post_id,event,uv_hash,created_at) VALUES(?,?,?,?)",
              (post_id, body.event, uv, db.now()))

@@ -21,7 +21,7 @@ from .config import settings
 from .helpers import ApiError, error_response
 from .routers_admin import router as admin_router
 from .routers_auth import router as auth_router
-from .routers_public import router as public_router
+from .routers_public import PUB_SQL, router as public_router
 from .routers_site import router as site_router, spa_response
 from .services import start_workers
 
@@ -75,6 +75,8 @@ async def request_context(request: Request, call_next):
         response.headers["Cache-Control"] = "no-cache"  # ES 模块无构建指纹：靠 ETag 协商，部署即时生效
     elif path.startswith("/api/") and "cache-control" not in response.headers:
         response.headers["Cache-Control"] = "no-store"
+    elif path in ("/rss.xml", "/feed", "/sitemap.xml"):
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 
@@ -111,7 +113,7 @@ async def unhandled_error_handler(request: Request, exc: Exception):
 
 @app.get("/api/health", tags=["系统"])
 def health():
-    post_count = db.q1("SELECT COUNT(*) AS c FROM posts")["c"]
+    post_count = db.q1(f"SELECT COUNT(*) AS c FROM posts p WHERE {PUB_SQL}")["c"]
     return {"code": 0, "message": "ok", "data": {"status": "up", "posts": post_count, "time": db.now()},
             "requestId": uuid.uuid4().hex}
 
